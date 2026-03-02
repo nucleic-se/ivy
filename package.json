@@ -1,0 +1,23 @@
+{
+  "name": "ivy",
+  "version": "0.1.0",
+  "description": "Ivy bundle for gears.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "dev": "tsc -w",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "devDependencies": {
+    "gears": "file:../../gears",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
