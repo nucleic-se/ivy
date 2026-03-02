@@ -5,16 +5,17 @@
  * or transport. Receives assembled context, calls the LLM once per
  * think() invocation, and returns an action list.
  *
- * The single-call-per-tick constraint is enforced by the output schema:
- * at most one speak, one dm, one note, and one configure per response.
- * This prevents repeated/duplicate output across think steps.
+ * At most one speak, one dm, one note, and one configure per response.
+ * Multiple tool calls are allowed via the `calls` array (max 5 per tick).
  */
 
 import type { ILLMProvider } from 'gears';
 import { AIPromptService, PromptContributorRegistry, PromptEngine } from 'gears/agentic';
-import type { Agent, AgentAction, AgentContext, WakeMode } from './types.js';
+import type { Agent, AgentAction, AgentContext, FsOp, WakeMode } from './types.js';
 import type { IvyPromptContext } from './packs/types.js';
+import type { Sandbox } from './sandbox/Sandbox.js';
 import { bootInternalPacks } from './packs/index.js';
+import { SandboxAgentPack } from './packs/sandbox-prompt.js';
 import { DEFAULT_AGENT_PACKS, DEFAULT_PROMPT_TOKEN_BUDGET } from './constants.js';
 
 export interface LLMAgentConfig {
@@ -24,6 +25,8 @@ export interface LLMAgentConfig {
     promptTokenBudget?: number;
     /** Internal packs only (self-contained). */
     packs?: string[];
+    /** Sandbox to expose to the agent via prompt contributors. */
+    sandbox?: Sandbox;
 }
 
 interface ThinkResult {
@@ -34,6 +37,8 @@ interface ThinkResult {
         wakeOn?: WakeMode;
         heartbeatMs?: number | null;
     };
+    fs?: { op: string; path: string; content?: string; dest?: string; recursive?: boolean };
+    calls?: Array<{ tool: string; args?: Record<string, unknown> }>;
 }
 
 const RESPONSE_SCHEMA = {
@@ -71,6 +76,35 @@ const RESPONSE_SCHEMA = {
             },
             description: 'Adjust your wake and heartbeat settings.',
         },
+        fs: {
+            type: 'object',
+            properties: {
+                op: {
+                    type: 'string',
+                    enum: ['read', 'write', 'ls', 'mkdir', 'rm', 'stat', 'mv'],
+                    description: 'Filesystem operation.',
+                },
+                path: { type: 'string', description: 'Absolute path within the sandbox (e.g. "/home/file.txt").' },
+                content: { type: 'string', description: 'File content for write operations.' },
+                dest: { type: 'string', description: 'Destination path for mv operations.' },
+                recursive: { type: 'boolean', description: 'For rm: delete non-empty directories and all their contents.' },
+            },
+            required: ['op', 'path'],
+            description: 'Perform a filesystem operation in the sandbox. Result arrives as an internal note on next wake.',
+        },
+        calls: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    tool: { type: 'string', description: 'Tool name as listed in /tools.' },
+                    args: { type: 'object', description: 'Arguments to pass to the tool.' },
+                },
+                required: ['tool'],
+            },
+            maxItems: 5,
+            description: 'Sandbox tool calls to execute this tick. Use multiple entries for atomic multi-step operations (e.g. write prose, update index, flip ledger in one shot). Maximum 5.',
+        },
     },
     required: [],
 };
@@ -91,6 +125,9 @@ export class LLMAgent implements Agent {
         this.promptTokenBudget = config.promptTokenBudget ?? DEFAULT_PROMPT_TOKEN_BUDGET;
         this.llmService = new AIPromptService(llm);
         bootInternalPacks(config.packs ?? [...DEFAULT_AGENT_PACKS], this.promptRegistry);
+        if (config.sandbox) {
+            new SandboxAgentPack(config.sandbox, config.handle).register({ promptRegistry: this.promptRegistry });
+        }
     }
 
     async think(context: AgentContext): Promise<AgentAction[]> {
@@ -127,6 +164,12 @@ export class LLMAgent implements Agent {
         if (result.configure !== undefined) {
             actions.push({ type: 'configure', ...result.configure });
         }
+        if (result.fs) {
+            actions.push({ type: 'fs', op: result.fs.op as FsOp, path: result.fs.path, content: result.fs.content, dest: result.fs.dest, recursive: result.fs.recursive });
+        }
+        for (const c of result.calls ?? []) {
+            actions.push({ type: 'call', tool: c.tool, args: c.args });
+        }
 
         return actions;
     }
@@ -157,6 +200,29 @@ export class LLMAgent implements Agent {
             if (c.heartbeatMs !== undefined && c.heartbeatMs !== null
                 && (typeof c.heartbeatMs !== 'number' || c.heartbeatMs <= 0)) {
                 throw new Error('LLM output configure.heartbeatMs must be a positive number or null');
+            }
+        }
+        if (raw.fs !== undefined) {
+            if (typeof raw.fs !== 'object' || raw.fs === null) throw new Error('LLM output fs must be an object');
+            const validOps = ['read', 'write', 'ls', 'mkdir', 'rm', 'stat', 'mv'] as const;
+            if (!validOps.includes(raw.fs.op as typeof validOps[number])) {
+                throw new Error(`LLM output fs.op must be one of: ${validOps.join(', ')}`);
+            }
+            if (typeof raw.fs.path !== 'string' || !raw.fs.path.trim()) throw new Error('LLM output fs.path must be a non-empty string');
+            if (raw.fs.op === 'mv' && (typeof raw.fs.dest !== 'string' || !raw.fs.dest.trim())) {
+                throw new Error('LLM output fs.dest must be a non-empty string for mv');
+            }
+        }
+        if (raw.calls !== undefined) {
+            if (!Array.isArray(raw.calls))
+                throw new Error('LLM output calls must be an array');
+            if (raw.calls.length > 5)
+                throw new Error('LLM output calls must not exceed 5 entries per tick');
+            for (const [i, c] of (raw.calls as unknown[]).entries()) {
+                if (typeof c !== 'object' || c === null)
+                    throw new Error(`LLM output calls[${i}] must be an object`);
+                if (typeof (c as any).tool !== 'string' || !(c as any).tool.trim())
+                    throw new Error(`LLM output calls[${i}].tool must be a non-empty string`);
             }
         }
         return raw;

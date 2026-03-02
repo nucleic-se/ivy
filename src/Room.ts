@@ -48,8 +48,9 @@ export class Room {
     dm(from: string, to: string, text: string): Message {
         this.assertMember(from);
         if (!this.participants.has(to)) {
-            this.logger?.warn(`dm target ${to} is not in the room — message dropped`, { from });
-            // Still persist for audit, but warn loudly.
+            this.logger?.warn(`dm target ${to} is not in the room`, { from });
+            // Notify sender so the agent knows the DM was not delivered.
+            this.note(from, `[System] DM to ${to} failed: no such participant in the room.`);
         }
         return this.send(from, to, text);
     }
@@ -68,9 +69,14 @@ export class Room {
         this.logger?.info(`${label} ${text}`);
 
         // Notify participants who can see this message (excluding sender).
+        // Wrapped per-recipient so a misbehaving participant cannot block others.
         for (const [handle, participant] of this.participants) {
             if (handle !== from && isVisibleTo(msg, handle)) {
-                participant.receive(msg);
+                try {
+                    participant.receive(msg);
+                } catch (err) {
+                    this.logger?.error(`Failed to deliver message to ${handle}`, { error: (err as Error).message });
+                }
             }
         }
 

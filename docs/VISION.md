@@ -18,7 +18,7 @@ Ivy treats the chatroom as the primitive. Participants observe, think, and speak
 
 3. **Async and non-blocking.** All agents operate asynchronously. No agent waits for another to finish before it can act. Agents run concurrently — they think and speak on their own schedule, not in lockstep.
 
-4. **Stimulus queue.** Each agent has an inbound queue of stimuli. Room messages, mentions, and other events are pushed into this queue. The agent consumes stimuli at its own pace — fast agents respond quickly, slow agents take their time. Nothing blocks. Agents sleep until a stimulus arrives — there is no polling or idle ticking.
+4. **Stimulus queue + optional heartbeat.** Each agent has an inbound queue of stimuli. Room messages, mentions, and other events are pushed into this queue. The agent consumes stimuli at its own pace — fast agents respond quickly, slow agents take their time. Nothing blocks. Agents can sleep until qualifying stimuli arrive, or optionally wake on a configured heartbeat interval.
 
 5. **The room log is the source of truth.** Every message — public and private — is persisted to a single ordered SQLite log (`RoomLog`). The log is the complete history of all events. Each participant only sees the messages routed to them (broadcasts + messages where they are the sender or recipient).
 
@@ -26,20 +26,28 @@ Ivy treats the chatroom as the primitive. Participants observe, think, and speak
 
    The room is transport-agnostic. **Adapters** bridge external platforms (Telegram, CLI, web, etc.) into the room as participants. Telegram is the first adapter. From the room's perspective an adapter is just another participant — messages in, messages out.
 
-6. **Shared sandbox.** *(planned — not yet implemented)* Agents live in a shared virtual file system — their world. They can create, modify, and delete files and folders. File operations are atomic. Agents can lock and release files to avoid race conditions. The sandbox is a first-class collaboration surface alongside the chatroom. It has two layers:
-   - **Root storage.** A dedicated folder on disk that backs the sandbox. This is where agent-created files live.
-   - **Mounts.** Physical folders and files can be mounted into the sandbox's virtual tree. Mounts can be read-only or read-write. This lets agents see and work with external files without copying them in.
+6. **Shared sandbox with per-agent home isolation.** All agents share a single sandbox rooted at
+   `GEARS_DATA_DIR/sandbox/`. Each agent owns `/home/<handle>/` (persistent, writable only by
+   that agent — other agents can read). `/tmp` is shared scratch. `/data` is shared read-write
+   persistent space. `/tools` is read-only for all agents. Security is layered: path traversal,
+   symlink escapes, cross-agent home writes, oversized reads/writes, and tool-name injection are
+   all rejected at the boundary.
 
-8. **Tools are files.** *(planned — not yet implemented)* Tools are defined as files in the sandbox (e.g. markdown or yaml describing their interface). Agents discover available tools by reading the filesystem. Tools can be mounted globally (visible to all agents) or per-agent. An agent's effective tool set is the union of global tools and its own mounted tools. All messages in the room are markdown-formatted. This is the shared lingua franca — agents produce markdown, the room stores markdown, and consumers render it however they like.
+7. **Tools are files.** Tools are organised into groups and exposed as JSON manifests under
+   `/tools/<group>/<tool>.json`. Agents discover them with `fs ls /tools` → `fs ls /tools/<group>`
+   → `fs read /tools/<group>/<tool>.json`, then invoke with a `calls` action (up to 5 calls per
+   tick for atomic multi-step operations). Results arrive as internal notes on the next wake.
+   All messages in the room are markdown-formatted — the shared lingua franca between agents,
+   the room, and consumers.
 
-9. **Minimal by default.** An agent is a name and a system prompt. Richer capabilities (tools, memory, goals) can be layered on later, one feature at a time — not baked in from day one.
+8. **Minimal by default.** An agent is a name and a system prompt. Richer capabilities (tools, memory, goals) can be layered on later, one feature at a time — not baked in from day one.
 
-10. **Iterative growth.** We start with the smallest thing that works and add features only when needed. No speculative abstractions.
+9. **Iterative growth.** We start with the smallest thing that works and add features only when needed. No speculative abstractions.
 
 ## Non-Goals (for now)
 
 - Persistent memory or beliefs across sessions
 - Cognitive stacks / deep reasoning frameworks
-- Autonomous background loops
+- Autonomous goal-directed work loops beyond message-triggered/heartbeat-triggered turns
 
 These may come later. They are explicitly out of scope for the first iteration.

@@ -157,6 +157,50 @@ describe('LLMAgent', () => {
         expect(call.text).toContain('## Attention settings');
         expect(call.text).toContain('mentions');
     });
+
+    it('returns two CallActions when LLM emits calls with two entries', async () => {
+        const llm = mockLLM({ calls: [{ tool: 'text/write', args: { path: '/home/a.md', content: 'hi' } }, { tool: 'text/write', args: { path: '/home/b.md', content: 'bye' } }] });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toHaveLength(2);
+        expect(result[0]).toEqual({ type: 'call', tool: 'text/write', args: { path: '/home/a.md', content: 'hi' } });
+        expect(result[1]).toEqual({ type: 'call', tool: 'text/write', args: { path: '/home/b.md', content: 'bye' } });
+    });
+
+    it('returns no CallActions when LLM emits calls: []', async () => {
+        const llm = mockLLM({ calls: [] });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toEqual([]);
+    });
+
+    it('throws when LLM emits calls with more than 5 entries', async () => {
+        const llm = mockLLM({
+            calls: [
+                { tool: 'a' }, { tool: 'b' }, { tool: 'c' },
+                { tool: 'd' }, { tool: 'e' }, { tool: 'f' },
+            ],
+        });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 5 entries per tick');
+    });
+
+    it('throws when LLM emits calls as non-array', async () => {
+        const llm = mockLLM({ calls: { tool: 'a' } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        await expect(agent.think(baseContext())).rejects.toThrow('calls must be an array');
+    });
+
+    it('throws when a calls entry is missing tool', async () => {
+        const llm = mockLLM({ calls: [{ tool: 'ok' }, { args: {} }] });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        await expect(agent.think(baseContext())).rejects.toThrow('calls[1].tool must be a non-empty string');
+    });
 });
 
 // ─── AgentParticipant (adapter) ─────────────────────────────────
@@ -486,5 +530,44 @@ describe('AgentParticipant', () => {
         const seen = nova.receive.mock.calls.map(c => c[0] as Message);
         expect(seen.some(m => m.text === 'Ping @ghost for details.')).toBe(true);
         expect(seen.some(m => m.text.includes('Unknown handle mention(s): @ghost'))).toBe(true);
+    });
+
+    it('aborts remaining call actions in batch after first failure and posts [batch] note', async () => {
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            think: vi.fn().mockResolvedValue([
+                { type: 'call', tool: 'text/write', args: { path: '/home/a.md' } },
+                { type: 'call', tool: 'text/write', args: { path: '/home/b.md' } },
+                { type: 'call', tool: 'text/write', args: { path: '/home/c.md' } },
+            ] satisfies AgentAction[]),
+        };
+
+        const participant = new AgentParticipant(agent, room);
+
+        // Inject a mock call handler: first call fails, others would succeed.
+        const mockHandle = vi.fn()
+            .mockRejectedValueOnce(new Error('disk full'))
+            .mockResolvedValue('ok');
+        (participant as any).actionHandlers.set('call', { type: 'call', handle: mockHandle });
+
+        room.join(participant);
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(nova);
+
+        participant.start();
+        participant.receive(msg('@nova', 'go'));
+
+        await vi.waitFor(() => {
+            expect(room.getInternal('@ivy').some(n => n.text.includes('[batch]'))).toBe(true);
+        });
+        participant.stop();
+
+        // Only one call handler invocation (the failing one); the other two were skipped.
+        expect(mockHandle).toHaveBeenCalledTimes(1);
+
+        const notes = room.getInternal('@ivy');
+        expect(notes.some(n => n.text.includes('Error: disk full'))).toBe(true);
+        expect(notes.some(n => n.text.includes('[batch]') && n.text.includes('2 remaining'))).toBe(true);
     });
 });

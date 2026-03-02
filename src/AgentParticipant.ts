@@ -16,10 +16,12 @@
  */
 
 import type { ILogger } from 'gears';
-import type { Agent, AgentAction, AgentContext, Message, Participant, WakeMode } from './types.js';
+import type { Agent, AgentAction, AgentContext, CallAction, Message, Participant, WakeMode } from './types.js';
 import type { Room } from './Room.js';
-import type { IvyRoutingGuard, RoutableAction } from './packs/types.js';
+import type { IvyActionHandler, IvyParticipantPackContext, IvyRoutingGuard, RoutableAction } from './packs/types.js';
+import type { Sandbox } from './sandbox/Sandbox.js';
 import { bootInternalParticipantPacks } from './packs/participant.js';
+import { SandboxParticipantPack } from './packs/sandbox-participant.js';
 import {
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_HEARTBEAT_MS,
@@ -36,6 +38,8 @@ export interface AgentParticipantConfig {
     heartbeatMs?: number | null;
     /** Internal participant packs only (self-contained). */
     packs?: string[];
+    /** Sandbox to expose to the agent via fs/call action handlers. */
+    sandbox?: Sandbox;
 }
 
 export class AgentParticipant implements Participant {
@@ -47,6 +51,7 @@ export class AgentParticipant implements Participant {
     private logger?: ILogger;
     private contextWindow: number;
     private routingGuards: IvyRoutingGuard[] = [];
+    private actionHandlers: Map<string, IvyActionHandler> = new Map();
 
     // Wake / attention settings (agent-configurable at runtime)
     private wakeMode: WakeMode;
@@ -69,10 +74,14 @@ export class AgentParticipant implements Participant {
         this.wakeMode = config?.wakeMode ?? DEFAULT_WAKE_MODE;
         this.heartbeatMs = config?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
         this.logger = logger;
-        bootInternalParticipantPacks(
-            config?.packs ?? [...DEFAULT_PARTICIPANT_PACKS],
-            (guard) => { this.routingGuards.push(guard); },
-        );
+        const packCtx: IvyParticipantPackContext = {
+            registerRoutingGuard: (guard) => { this.routingGuards.push(guard); },
+            registerActionHandler: (handler) => { this.actionHandlers.set(handler.type, handler); },
+        };
+        bootInternalParticipantPacks(config?.packs ?? [...DEFAULT_PARTICIPANT_PACKS], packCtx);
+        if (config?.sandbox) {
+            new SandboxParticipantPack(config.sandbox).register(packCtx);
+        }
     }
 
     /**
@@ -94,6 +103,19 @@ export class AgentParticipant implements Participant {
         this.loop().catch(err => {
             this.logger?.error(`${this.displayName} loop crashed`, { error: (err as Error).message });
         });
+    }
+
+    /**
+     * Inject a text observation as an internal note and wake the agent if it is sleeping.
+     * Used by ScheduleToolPack (and similar) to deliver reminder fire events.
+     */
+    observe(text: string): void {
+        this.room.note(this.handle, text);
+        if (this.wakeResolve) {
+            this.clearHeartbeatTimer();
+            this.wakeResolve();
+            this.wakeResolve = null;
+        }
     }
 
     /** Stop the processing loop and cancel any pending heartbeat. */
@@ -204,6 +226,47 @@ export class AgentParticipant implements Participant {
             if (action.type === 'note') {
                 this.room.note(this.handle, action.text);
             }
+        }
+
+        // Fs / Call: dispatch to registered action handlers; post result as an internal note.
+        // For call actions: if one fails and more remain in the batch, post a batch-abort note
+        // and stop executing further call actions. The fs action (always single) is unaffected.
+        const callActions = actions.filter(a => a.type === 'call');
+        let callIndex = 0;
+        let callBatchAborted = false;
+
+        for (const action of actions) {
+            if (action.type !== 'fs' && action.type !== 'call') continue;
+            if (action.type === 'call' && callBatchAborted) continue;
+            const handler = this.actionHandlers.get(action.type);
+            if (!handler) {
+                this.logger?.warn(`${this.displayName} has no handler for action type "${action.type}"`);
+                if (action.type === 'call') callIndex++;
+                continue;
+            }
+            let result: string;
+            let failed = false;
+            try {
+                result = await handler.handle(action, this.handle);
+            } catch (err) {
+                result = `Error: ${(err as Error).message}`;
+                failed = true;
+                this.logger?.warn(`${this.displayName} action handler error`, { type: action.type, error: (err as Error).message });
+            }
+            if (!this.running || this.runVersion !== versionAtStart) return;
+            this.room.note(this.handle, result);
+
+            if (failed && action.type === 'call') {
+                const skipped = callActions.length - callIndex - 1;
+                if (skipped > 0) {
+                    callBatchAborted = true;
+                    this.room.note(
+                        this.handle,
+                        `[batch] ${skipped} remaining call(s) skipped after error in \`${(action as CallAction).tool}\`. Re-read state before retrying.`,
+                    );
+                }
+            }
+            if (action.type === 'call') callIndex++;
         }
 
         // Speak / DM: pass through routing guards before dispatch.

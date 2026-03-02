@@ -193,7 +193,7 @@ describe('Room', () => {
         expect(room.getPrivate('@ivy').map(m => m.text)).not.toContain('private thought');
     });
 
-    it('dm to unknown handle logs warning but still persists', () => {
+    it('dm to unknown handle logs warning, notifies sender, and still persists', () => {
         const ivy = makeParticipant('@ivy');
         const mockLogger = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() };
         const roomWithLogger = new Room(log, mockLogger as any);
@@ -201,7 +201,11 @@ describe('Room', () => {
 
         const msg = roomWithLogger.dm('@ivy', '@ghost', 'lost message');
         expect(msg.to).toBe('@ghost');
-        expect(log.count()).toBe(1);
+        // 2 messages: the feedback note to the sender + the persisted DM
+        expect(log.count()).toBe(2);
+        // Sender receives an internal note about the failure
+        const internals = roomWithLogger.getInternal('@ivy', 5);
+        expect(internals.some(m => m.text.includes('@ghost'))).toBe(true);
         expect(mockLogger.warn).toHaveBeenCalledWith(
             expect.stringContaining('@ghost'),
             expect.any(Object),

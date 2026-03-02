@@ -74,7 +74,30 @@ export interface ConfigureAction {
     heartbeatMs?: number | null;
 }
 
-export type AgentAction = SpeakAction | DmAction | NoteAction | ConfigureAction;
+export type FsOp = 'read' | 'write' | 'ls' | 'mkdir' | 'rm' | 'stat' | 'mv';
+
+/** Perform a filesystem operation inside the agent sandbox. */
+export interface FsAction {
+    type: 'fs';
+    op: FsOp;
+    /** Absolute path from sandbox root, e.g. "/home/notes.md". */
+    path: string;
+    /** Content for write operations. */
+    content?: string;
+    /** Destination path for mv operations. */
+    dest?: string;
+    /** For rm: delete non-empty directories recursively. */
+    recursive?: boolean;
+}
+
+/** Invoke a named tool registered in the sandbox tool registry. */
+export interface CallAction {
+    type: 'call';
+    tool: string;
+    args?: Record<string, unknown>;
+}
+
+export type AgentAction = SpeakAction | DmAction | NoteAction | ConfigureAction | FsAction | CallAction;
 
 /**
  * Agent — pure cognitive interface.

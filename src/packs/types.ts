@@ -38,8 +38,14 @@ export interface IvyRoutingGuard {
     inspect(ctx: IvyRoutingGuardContext): IvyRoutingGuardResult | Promise<IvyRoutingGuardResult>;
 }
 
+export interface IvyActionHandler {
+    type: string;
+    handle(action: import('../types.js').AgentAction, agentHandle: string): Promise<string>;
+}
+
 export interface IvyParticipantPackContext {
     registerRoutingGuard(guard: IvyRoutingGuard): void;
+    registerActionHandler(handler: IvyActionHandler): void;
 }
 
 export interface IvyParticipantPack {

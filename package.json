@@ -15,6 +15,11 @@
   "engines": {
     "node": ">=20.18.1"
   },
+  "dependencies": {
+    "@types/diff": "^7.0.2",
+    "defuddle": "^0.7.0",
+    "diff": "^8.0.3"
+  },
   "devDependencies": {
     "gears": "file:../../gears",
     "typescript": "^5.9.3",
