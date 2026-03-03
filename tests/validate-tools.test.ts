@@ -181,6 +181,29 @@ describe('MANIFEST_UNDOC check', () => {
         const r = await run(sandbox, '/home', 'manifest');
         expect(r.violations.filter(v => v.rule === 'MANIFEST_UNDOC')).toHaveLength(0);
     });
+
+    it('passes when a file matches a wildcard pattern in index.md', async () => {
+        write(root, 'home/diary/index.md', '# Diary\n- `*.md`: Daily entries.\n');
+        write(root, 'home/diary/2026-03-02.md', '# Day 1\n');
+        write(root, 'home/diary/2026-03-03.md', '# Day 2\n');
+        const r = await run(sandbox, '/home/diary', 'manifest');
+        expect(r.violations.filter(v => v.rule === 'MANIFEST_UNDOC')).toHaveLength(0);
+    });
+
+    it('passes when a file matches a prefix wildcard pattern', async () => {
+        write(root, 'home/logs/index.md', '# Logs\n- `2026-*.md`: Log files.\n');
+        write(root, 'home/logs/2026-03-01.md', 'log\n');
+        const r = await run(sandbox, '/home/logs', 'manifest');
+        expect(r.violations.filter(v => v.rule === 'MANIFEST_UNDOC')).toHaveLength(0);
+    });
+
+    it('still flags a file that does not match any wildcard', async () => {
+        write(root, 'home/logs/index.md', '# Logs\n- `2026-*.md`: Log files.\n');
+        write(root, 'home/logs/2026-03-01.md', 'log\n');
+        write(root, 'home/logs/README.md', 'readme\n');
+        const r = await run(sandbox, '/home/logs', 'manifest');
+        expect(r.violations.some(v => v.rule === 'MANIFEST_UNDOC' && v.path.includes('README.md'))).toBe(true);
+    });
 });
 
 // ─── BROKEN_REF ──────────────────────────────────────────────────
@@ -365,5 +388,117 @@ describe('summary and status', () => {
     it('throws for a file path (not a directory)', async () => {
         write(root, 'home/file.md', '# File\n');
         await expect(run(sandbox, '/home/file.md')).rejects.toThrow(/directory/i);
+    });
+});
+
+// ─── validate: skip ──────────────────────────────────────────────
+
+describe('validate: skip marker', () => {
+    let sandbox: Sandbox;
+    let root: string;
+    let cleanup: () => void;
+
+    beforeEach(() => ({ sandbox, root, cleanup } = tempSandbox()));
+    afterEach(() => cleanup());
+
+    it('suppresses INDEX_MISSING for children of a skipped directory', async () => {
+        write(root, 'home/index.md', '- `private/`: Private.\n');
+        write(root, 'home/private/index.md', 'validate: skip\n\n- `*`: All contents.\n');
+        // subdir inside private/ has no index.md — would normally be INDEX_MISSING
+        fs.mkdirSync(path.join(root, 'home', 'private', 'subdir'), { recursive: true });
+
+        const r = await run(sandbox, '/home');
+        expect(r.violations.filter(v => v.path.includes('subdir'))).toHaveLength(0);
+    });
+
+    it('suppresses MANIFEST_UNDOC for contents of a skipped directory', async () => {
+        write(root, 'home/index.md', '- `private/`: Private.\n');
+        write(root, 'home/private/index.md', 'validate: skip\n\n- `*`: All contents.\n');
+        write(root, 'home/private/undocumented.md', '# Undocumented\n');
+
+        const r = await run(sandbox, '/home');
+        expect(r.violations.filter(v => v.path.includes('undocumented'))).toHaveLength(0);
+    });
+
+    it('suppresses BROKEN_REF inside a skipped directory', async () => {
+        write(root, 'home/index.md', '- `private/`: Private.\n');
+        write(root, 'home/private/index.md', 'validate: skip\n\n- `*`: All contents.\n');
+        write(root, 'home/private/notes.md', '[broken](./ghost.md)\n');
+
+        const r = await run(sandbox, '/home');
+        expect(r.violations.filter(v => v.rule === 'BROKEN_REF')).toHaveLength(0);
+    });
+
+    it('still checks the skipped directory itself (INDEX_MISSING on the dir)', async () => {
+        write(root, 'home/index.md', '- `private/`: Private.\n');
+        // private/ exists but has no index.md at all
+        fs.mkdirSync(path.join(root, 'home', 'private'), { recursive: true });
+
+        const r = await run(sandbox, '/home', 'index');
+        expect(r.violations.some(v => v.rule === 'INDEX_MISSING' && v.path.includes('private'))).toBe(true);
+    });
+});
+
+// ─── CONTEXT_STALE ────────────────────────────────────────────────
+
+describe('CONTEXT_STALE check', () => {
+    let sandbox: Sandbox;
+    let root: string;
+    let cleanup: () => void;
+
+    beforeEach(() => ({ sandbox, root, cleanup } = tempSandbox()));
+    afterEach(() => cleanup());
+
+    function ctx(activeProject: string, items: string[]) {
+        const checklist = items.length === 0
+            ? '(empty)'
+            : items.map(s => `  - ${s}`).join('\n');
+        return [
+            `Active Project: ${activeProject}`,
+            'Current Task: build something',
+            'Current Protocols: WORKFLOW.md',
+            'Mini Checklist:',
+            checklist,
+            'Open Questions: None',
+            'Recent Updates: None',
+        ].join('\n');
+    }
+
+    it('fires when Active Project is set and all items are [x]', async () => {
+        write(root, 'home/nova/CONTEXT.md', ctx('MyProject', ['[x] write spec', '[x] review']));
+        const r = await run(sandbox, '/home/nova', 'context');
+        expect(r.violations.some(v => v.rule === 'CONTEXT_STALE')).toBe(true);
+    });
+
+    it('does not fire when at least one item is [ ]', async () => {
+        write(root, 'home/nova/CONTEXT.md', ctx('MyProject', ['[x] write spec', '[ ] review']));
+        const r = await run(sandbox, '/home/nova', 'context');
+        expect(r.violations.filter(v => v.rule === 'CONTEXT_STALE')).toHaveLength(0);
+    });
+
+    it('does not fire when at least one item is [/] (in progress)', async () => {
+        write(root, 'home/nova/CONTEXT.md', ctx('MyProject', ['[x] write spec', '[/] review']));
+        const r = await run(sandbox, '/home/nova', 'context');
+        expect(r.violations.filter(v => v.rule === 'CONTEXT_STALE')).toHaveLength(0);
+    });
+
+    it('does not fire when Active Project is None', async () => {
+        write(root, 'home/nova/CONTEXT.md', ctx('None', ['[x] write spec']));
+        const r = await run(sandbox, '/home/nova', 'context');
+        expect(r.violations.filter(v => v.rule === 'CONTEXT_STALE')).toHaveLength(0);
+    });
+
+    it('does not fire when checklist is empty', async () => {
+        write(root, 'home/nova/CONTEXT.md', ctx('MyProject', []));
+        const r = await run(sandbox, '/home/nova', 'context');
+        expect(r.violations.filter(v => v.rule === 'CONTEXT_STALE')).toHaveLength(0);
+    });
+
+    it('hint mentions clearing the checklist and resetting Active Project', async () => {
+        write(root, 'home/nova/CONTEXT.md', ctx('MyProject', ['[x] done']));
+        const r = await run(sandbox, '/home/nova', 'context');
+        const v = r.violations.find(v => v.rule === 'CONTEXT_STALE');
+        expect(v?.hint).toContain('Active Project');
+        expect(v?.hint).toContain('[x]');
     });
 });

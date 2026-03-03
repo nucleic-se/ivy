@@ -10,7 +10,7 @@ import { AgentParticipant } from '../src/AgentParticipant.js';
 import { RoomLog } from '../src/RoomLog.js';
 import { Room } from '../src/Room.js';
 import type { Agent, AgentAction, AgentContext, Message } from '../src/types.js';
-import { createTestDatabase } from 'gears/testing';
+import { createTestDatabase, MemoryStore } from 'gears/testing';
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -32,6 +32,9 @@ function baseContext(overrides: Partial<AgentContext> = {}): AgentContext {
         dmSenders: [],
         wakeMode: 'all',
         heartbeatMs: null,
+        publicContextWindow: 25,
+        privateContextWindow: 20,
+        internalContextWindow: 15,
         ...overrides,
     };
 }
@@ -200,6 +203,34 @@ describe('LLMAgent', () => {
         const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
 
         await expect(agent.think(baseContext())).rejects.toThrow('calls[1].tool must be a non-empty string');
+    });
+
+    it('returns coordinate action when LLM provides coordinate field', async () => {
+        const llm = mockLLM({ coordinate: { to: '@nova', text: 'handoff: please continue' } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toEqual([{ type: 'coordinate', to: '@nova', text: 'handoff: please continue' }]);
+    });
+
+    it('validates coordinate requires non-empty to and text', async () => {
+        const llm = mockLLM({ coordinate: { to: '', text: 'hi' } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+        await expect(agent.think(baseContext())).rejects.toThrow('coordinate.to must be a non-empty string');
+    });
+
+    it('returns configure with context window fields', async () => {
+        const llm = mockLLM({ configure: { publicContextWindow: 10, privateContextWindow: 5, internalContextWindow: 8 } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toEqual([{ type: 'configure', publicContextWindow: 10, privateContextWindow: 5, internalContextWindow: 8 }]);
+    });
+
+    it('rejects configure.publicContextWindow below minimum', async () => {
+        const llm = mockLLM({ configure: { publicContextWindow: 3 } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+        await expect(agent.think(baseContext())).rejects.toThrow(/publicContextWindow.*must be an integer >= 5/i);
     });
 });
 
@@ -532,7 +563,66 @@ describe('AgentParticipant', () => {
         expect(seen.some(m => m.text.includes('Unknown handle mention(s): @ghost'))).toBe(true);
     });
 
-    it('aborts remaining call actions in batch after first failure and posts [batch] note', async () => {
+    it('routes coordinate action as a DM to the target', async () => {
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            think: vi.fn().mockResolvedValue([{ type: 'coordinate', to: '@nova', text: 'take it from here' }] satisfies AgentAction[]),
+        };
+
+        const participant = new AgentParticipant(agent, room);
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(participant);
+        room.join(nova);
+
+        participant.start();
+        participant.receive(msg('@nova', 'hi'));
+
+        await vi.waitFor(() => {
+            expect(nova.receive).toHaveBeenCalled();
+        });
+        participant.stop();
+
+        const lastMsg = nova.receive.mock.calls.at(-1)?.[0] as Message;
+        expect(lastMsg.from).toBe('@ivy');
+        expect(lastMsg.to).toBe('@nova');
+        expect(lastMsg.text).toBe('take it from here');
+    });
+
+    it('applies configure context window fields', async () => {
+        let callCount = 0;
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            think: vi.fn().mockImplementation(() => {
+                callCount++;
+                if (callCount === 1) {
+                    return Promise.resolve([{ type: 'configure', publicContextWindow: 7 }] satisfies AgentAction[]);
+                }
+                return Promise.resolve([]);
+            }),
+        };
+
+        const participant = new AgentParticipant(agent, room);
+        room.join(participant);
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(nova);
+
+        participant.start();
+        participant.receive(msg('@nova', 'first'));
+
+        await vi.waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));
+
+        participant.receive(msg('@nova', 'second'));
+        await vi.waitFor(() => expect(callCount).toBeGreaterThanOrEqual(2));
+        participant.stop();
+
+        // On second think(), the context should reflect the updated window.
+        const ctx2 = (agent.think as ReturnType<typeof vi.fn>).mock.calls[1][0] as AgentContext;
+        expect(ctx2.publicContextWindow).toBe(7);
+    });
+
+    it('aborts remaining call actions in batch after first failure and posts combined note', async () => {
         const agent: Agent = {
             handle: '@ivy',
             displayName: 'Ivy',
@@ -559,15 +649,106 @@ describe('AgentParticipant', () => {
         participant.receive(msg('@nova', 'go'));
 
         await vi.waitFor(() => {
-            expect(room.getInternal('@ivy').some(n => n.text.includes('[batch]'))).toBe(true);
+            expect(room.getInternal('@ivy').some(n => n.text.includes('[calls: 3 ops]'))).toBe(true);
         });
         participant.stop();
 
         // Only one call handler invocation (the failing one); the other two were skipped.
         expect(mockHandle).toHaveBeenCalledTimes(1);
 
+        // All results are combined into a single note.
         const notes = room.getInternal('@ivy');
-        expect(notes.some(n => n.text.includes('Error: disk full'))).toBe(true);
-        expect(notes.some(n => n.text.includes('[batch]') && n.text.includes('2 remaining'))).toBe(true);
+        const batchNote = notes.find(n => n.text.includes('[calls: 3 ops]'));
+        expect(batchNote).toBeDefined();
+        expect(batchNote!.text).toContain('Error: disk full');
+        expect(batchNote!.text).toContain('[batch]');
+        expect(batchNote!.text).toContain('2 remaining');
+    });
+});
+
+// ─── Config persistence (IStore) ────────────────────────────────
+
+describe('AgentParticipant — config persistence', () => {
+    let room: Room;
+
+    beforeEach(() => {
+        room = new Room(new RoomLog(createTestDatabase()));
+    });
+
+    it('restores heartbeatMs from store on start', async () => {
+        const store = new MemoryStore();
+        await store.set('ivy:agent:@ivy:config', { heartbeatMs: 42000, wakeMode: 'mentions' });
+
+        const agent: Agent = { handle: '@ivy', displayName: 'Ivy', think: vi.fn().mockResolvedValue([]) };
+        const participant = new AgentParticipant(agent, room, { store });
+        room.join(participant);
+        room.join({ handle: '@nova', displayName: 'Nova', receive: vi.fn() });
+
+        participant.start();
+        participant.receive(msg('@nova', 'hey @ivy'));
+
+        await vi.waitFor(() => expect(agent.think).toHaveBeenCalled());
+        participant.stop();
+
+        const ctx = (agent.think as ReturnType<typeof vi.fn>).mock.calls[0][0] as AgentContext;
+        expect(ctx.heartbeatMs).toBe(42000);
+        expect(ctx.wakeMode).toBe('mentions');
+    });
+
+    it('persists config to store after a configure action', async () => {
+        const store = new MemoryStore();
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            think: vi.fn().mockResolvedValue([{ type: 'configure', heartbeatMs: 99000, wakeOn: 'dm' }]),
+        };
+        const participant = new AgentParticipant(agent, room, { store });
+        room.join(participant);
+        room.join({ handle: '@nova', displayName: 'Nova', receive: vi.fn() });
+
+        participant.start();
+        participant.receive(msg('@nova', 'hey @ivy'));
+
+        await vi.waitFor(async () => {
+            const saved = await store.get<any>('ivy:agent:@ivy:config');
+            expect(saved?.heartbeatMs).toBe(99000);
+        });
+        participant.stop();
+
+        const saved = await store.get<any>('ivy:agent:@ivy:config');
+        expect(saved?.wakeMode).toBe('dm');
+    });
+
+    it('explicit constructor config overrides persisted value', async () => {
+        const store = new MemoryStore();
+        await store.set('ivy:agent:@ivy:config', { heartbeatMs: 42000 });
+
+        const agent: Agent = { handle: '@ivy', displayName: 'Ivy', think: vi.fn().mockResolvedValue([]) };
+        // Explicit heartbeatMs: 5000 in constructor — should win over stored 42000.
+        const participant = new AgentParticipant(agent, room, { store, heartbeatMs: 5000 });
+        room.join(participant);
+        room.join({ handle: '@nova', displayName: 'Nova', receive: vi.fn() });
+
+        participant.start();
+        participant.receive(msg('@nova', 'hey @ivy'));
+
+        await vi.waitFor(() => expect(agent.think).toHaveBeenCalled());
+        participant.stop();
+
+        const ctx = (agent.think as ReturnType<typeof vi.fn>).mock.calls[0][0] as AgentContext;
+        expect(ctx.heartbeatMs).toBe(5000);
+    });
+
+    it('works without a store (no-op, no errors)', async () => {
+        const agent: Agent = { handle: '@ivy', displayName: 'Ivy', think: vi.fn().mockResolvedValue([]) };
+        const participant = new AgentParticipant(agent, room); // no store
+        room.join(participant);
+        room.join({ handle: '@nova', displayName: 'Nova', receive: vi.fn() });
+
+        participant.start();
+        participant.receive(msg('@nova', 'hey @ivy'));
+
+        await vi.waitFor(() => expect(agent.think).toHaveBeenCalled());
+        participant.stop();
     });
 });

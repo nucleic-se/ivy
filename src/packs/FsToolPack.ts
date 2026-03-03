@@ -15,24 +15,11 @@ import { createTwoFilesPatch } from 'diff';
 import type { Sandbox } from '../sandbox/Sandbox.js';
 import { ToolGroupPack, type Tool } from '../sandbox/ToolGroupPack.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
+import { requireString, normAgentPath } from './pack-helpers.js';
 
 // ─── Constants ───────────────────────────────────────────────────
 
 const MAX_FILE_BYTES = 512 * 1024; // 512 KB per file
-
-// ─── Argument helpers ────────────────────────────────────────────
-
-function requireString(args: Record<string, unknown>, key: string): string {
-    const v = args[key];
-    if (typeof v !== 'string') throw new Error(`"${key}" must be a string`);
-    return v;
-}
-
-function normAgentPath(raw: string): string {
-    const p = path.normalize(raw);
-    if (!path.isAbsolute(p)) throw new Error(`Path must be absolute, got: ${raw}`);
-    return p;
-}
 
 // ─── FsToolPack ──────────────────────────────────────────────────
 

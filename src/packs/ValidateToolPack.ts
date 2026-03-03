@@ -11,6 +11,7 @@
  *   MANIFEST_UNDOC — a file/dir exists in a directory but its name is absent from index.md
  *   BROKEN_REF     — a non-index .md file contains a relative link to a non-existent target
  *   CONTEXT_SCHEMA — a CONTEXT.md file is missing one or more required sections
+ *   CONTEXT_STALE  — a CONTEXT.md has Active Project set but all Mini Checklist items are [x]
  *
  * All paths in output are agent-visible absolute paths (e.g. "/home/nova/CONTEXT.md").
  * Security is delegated to the Sandbox instance for path resolution.
@@ -21,6 +22,7 @@ import * as path from 'node:path';
 import type { Sandbox } from '../sandbox/Sandbox.js';
 import { ToolGroupPack, type Tool } from '../sandbox/ToolGroupPack.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
+import { requireString, normAgentPath, globToRegex, isDocumentedInIndex } from './pack-helpers.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -29,7 +31,8 @@ type RuleId =
     | 'MANIFEST_DEAD'   // index.md links to a non-existent file
     | 'MANIFEST_UNDOC'  // file/dir exists but its name is absent from index.md
     | 'BROKEN_REF'      // non-index .md file links to a non-existent target
-    | 'CONTEXT_SCHEMA'; // CONTEXT.md is missing a required section
+    | 'CONTEXT_SCHEMA'  // CONTEXT.md is missing a required section
+    | 'CONTEXT_STALE';  // CONTEXT.md has Active Project set but all checklist items are [x]
 
 interface Violation {
     rule: RuleId;
@@ -60,18 +63,6 @@ const MAX_ENTRIES = 2_000;
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function requireString(args: Record<string, unknown>, key: string): string {
-    const v = args[key];
-    if (typeof v !== 'string') throw new Error(`"${key}" must be a string`);
-    return v;
-}
-
-function normAgentPath(raw: string): string {
-    const p = path.normalize(raw);
-    if (!path.isAbsolute(p)) throw new Error(`Path must be absolute, got: ${raw}`);
-    return p;
-}
-
 function toAgentPath(realPath: string, sandboxRoot: string): string {
     return realPath.slice(sandboxRoot.length) || '/';
 }
@@ -84,10 +75,18 @@ function agentIndexPath(dirReal: string, sandboxRoot: string): string {
 /**
  * Walk a directory tree yielding every entry (file or dir).
  * Skips hidden entries and dirs listed in SKIP_DIRS.
+ * If a directory's index.md contains "validate: skip" (case-insensitive), the directory's
+ * contents are not traversed — the directory itself is still yielded by its parent.
  */
 function* walkTree(
     dirReal: string,
 ): Generator<{ real: string; isDir: boolean; name: string }> {
+    // Check for opt-out marker before yielding any children.
+    try {
+        const indexContent = fs.readFileSync(path.join(dirReal, 'index.md'), 'utf-8');
+        if (/^validate:\s*skip\s*$/im.test(indexContent)) return;
+    } catch { /* no index.md or unreadable — continue normally */ }
+
     let entries: fs.Dirent[];
     try { entries = fs.readdirSync(dirReal, { withFileTypes: true }); }
     catch { return; }
@@ -170,7 +169,7 @@ function checkManifest(
     for (const e of entries) {
         if (e.name.startsWith('.')) continue;
         if (EXEMPT_FROM_UNDOC.has(e.name)) continue;
-        if (!content.includes(e.name)) {
+        if (!isDocumentedInIndex(e.name, e.isDirectory(), content)) {
             const agentDir = toAgentPath(dirReal, sandboxRoot);
             const entryAgent = `${agentDir === '/' ? '' : agentDir}/${e.name}${e.isDirectory() ? '/' : ''}`;
             violations.push({
@@ -228,26 +227,105 @@ function checkContextSchema(
     }
 }
 
+function checkContextStale(
+    fileReal: string,
+    sandboxRoot: string,
+    violations: Violation[],
+): void {
+    let content: string;
+    try { content = fs.readFileSync(fileReal, 'utf-8'); }
+    catch { return; }
+
+    // Only fire when Active Project is set (not None or missing).
+    const projectMatch = content.match(/^Active Project:\s*(.+)$/m);
+    if (!projectMatch || projectMatch[1]!.trim().toLowerCase() === 'none') return;
+
+    // Find all checklist items: - [ ], - [x], - [/]
+    const checklistItems = [...content.matchAll(/^[ \t]*-\s+\[([^\]]*)\]/gm)];
+    if (checklistItems.length === 0) return;
+
+    const hasIncomplete = checklistItems.some(m => m[1] !== 'x');
+    if (!hasIncomplete) {
+        violations.push({
+            rule: 'CONTEXT_STALE',
+            path: toAgentPath(fileReal, sandboxRoot),
+            hint: 'All Mini Checklist items are [x] — clear the checklist and reset Active Project/Current Task to None.',
+        });
+    }
+}
+
 // ─── ValidateToolPack ────────────────────────────────────────────
 
 export class ValidateToolPack {
     constructor(private readonly sandbox: Sandbox) {}
 
     createLayer(): SandboxLayer {
-        return new ToolGroupPack('validate', [this.runTool()]).createLayer();
+        return new ToolGroupPack('validate', [this.runTool(), this.gateTool()]).createLayer();
+    }
+
+    // ── Shared scan logic ────────────────────────────────────────
+
+    private scan(agentPath: string, checksArg: unknown): {
+        violations: Violation[];
+        dirCount: number;
+        fileCount: number;
+        truncated: boolean;
+    } {
+        const checksStr = typeof checksArg === 'string'
+            ? checksArg
+            : 'index,manifest,refs,context';
+        const activeChecks = new Set(
+            checksStr.split(',').map(s => s.trim()).filter(Boolean),
+        );
+
+        const { sandbox } = this;
+        const realBase = sandbox.resolveExisting(agentPath);
+        if (!fs.statSync(realBase).isDirectory()) {
+            throw new Error(`Path must be a directory: ${agentPath}`);
+        }
+
+        const violations: Violation[] = [];
+        let dirCount = 0;
+        let fileCount = 0;
+        let entryCount = 0;
+        let truncated = false;
+
+        dirCount++;
+        if (activeChecks.has('index'))    checkIndexMissing(realBase, sandbox.root, violations);
+        if (activeChecks.has('manifest')) checkManifest(realBase, sandbox.root, violations);
+
+        for (const { real, isDir, name } of walkTree(realBase)) {
+            if (++entryCount > MAX_ENTRIES) { truncated = true; break; }
+
+            if (isDir) {
+                dirCount++;
+                if (activeChecks.has('index'))    checkIndexMissing(real, sandbox.root, violations);
+                if (activeChecks.has('manifest')) checkManifest(real, sandbox.root, violations);
+            } else {
+                fileCount++;
+                if (activeChecks.has('refs') && name.endsWith('.md') && name !== 'index.md') {
+                    checkBrokenRefs(real, sandbox.root, violations);
+                }
+                if (activeChecks.has('context') && name === 'CONTEXT.md') {
+                    checkContextSchema(real, sandbox.root, violations);
+                    checkContextStale(real, sandbox.root, violations);
+                }
+            }
+        }
+
+        return { violations, dirCount, fileCount, truncated };
     }
 
     // ── validate/run ────────────────────────────────────────────
 
     private runTool(): Tool {
-        const { sandbox } = this;
         return {
             name: 'run',
             description: [
                 'Run compliance checks on a sandbox path.',
                 'Returns a structured pass/fail report with exact violations (rule, path, fix hint).',
                 'Checks: index (every dir has index.md), manifest (links valid + files documented),',
-                'refs (no broken links in .md files), context (CONTEXT.md schema compliance).',
+                'refs (no broken links in .md files), context (CONTEXT.md schema + stale state).',
                 'Required before any task close or review submission.',
             ].join(' '),
             parameters: {
@@ -265,47 +343,7 @@ export class ValidateToolPack {
             returns: '{ status, violations[{ rule, path, hint }], summary }',
             handler: async (args) => {
                 const agentPath = normAgentPath(requireString(args, 'path'));
-                const checksStr = typeof args['checks'] === 'string'
-                    ? args['checks']
-                    : 'index,manifest,refs,context';
-                const activeChecks = new Set(
-                    checksStr.split(',').map(s => s.trim()).filter(Boolean),
-                );
-
-                const realBase = sandbox.resolveExisting(agentPath);
-                if (!fs.statSync(realBase).isDirectory()) {
-                    throw new Error(`Path must be a directory: ${agentPath}`);
-                }
-
-                const violations: Violation[] = [];
-                let dirCount = 0;
-                let fileCount = 0;
-                let entryCount = 0;
-                let truncated = false;
-
-                // Check the root dir itself.
-                dirCount++;
-                if (activeChecks.has('index'))    checkIndexMissing(realBase, sandbox.root, violations);
-                if (activeChecks.has('manifest')) checkManifest(realBase, sandbox.root, violations);
-
-                for (const { real, isDir, name } of walkTree(realBase)) {
-                    if (++entryCount > MAX_ENTRIES) { truncated = true; break; }
-
-                    if (isDir) {
-                        dirCount++;
-                        if (activeChecks.has('index'))    checkIndexMissing(real, sandbox.root, violations);
-                        if (activeChecks.has('manifest')) checkManifest(real, sandbox.root, violations);
-                    } else {
-                        fileCount++;
-                        if (activeChecks.has('refs') && name.endsWith('.md') && name !== 'index.md') {
-                            checkBrokenRefs(real, sandbox.root, violations);
-                        }
-                        if (activeChecks.has('context') && name === 'CONTEXT.md') {
-                            checkContextSchema(real, sandbox.root, violations);
-                        }
-                    }
-                }
-
+                const { violations, dirCount, fileCount, truncated } = this.scan(agentPath, args['checks']);
                 return {
                     status: violations.length === 0 ? 'pass' : 'fail',
                     violations,
@@ -313,6 +351,63 @@ export class ValidateToolPack {
                         directories_checked: dirCount,
                         files_checked: fileCount,
                         violations: violations.length,
+                        ...(truncated ? { warning: `Scan truncated at ${MAX_ENTRIES} entries` } : {}),
+                    },
+                };
+            },
+        };
+    }
+
+    // ── validate/gate ────────────────────────────────────────────
+    //
+    // Identical to validate/run but THROWS on failure.
+    // Designed for use inside batch/apply: include as the final op to make the
+    // entire batch roll back if the workspace is non-compliant after the changes.
+
+    private gateTool(): Tool {
+        return {
+            name: 'gate',
+            description: [
+                'Run compliance checks and throw if any violations are found.',
+                'Same checks as validate/run but causes batch/apply to roll back on failure.',
+                'Use as the final op in a batch to enforce structural integrity atomically.',
+            ].join(' '),
+            parameters: {
+                path: {
+                    type: 'string',
+                    description: 'Absolute sandbox path to validate',
+                    required: true,
+                },
+                checks: {
+                    type: 'string',
+                    description: 'Comma-separated subset: index,manifest,refs,context (default: all four)',
+                    required: false,
+                },
+            },
+            returns: '{ status: "pass", summary }  — throws on any violation',
+            handler: async (args) => {
+                const agentPath = normAgentPath(requireString(args, 'path'));
+                const { violations, dirCount, fileCount, truncated } = this.scan(agentPath, args['checks']);
+
+                if (violations.length > 0) {
+                    const lines = violations
+                        .slice(0, 10)
+                        .map(v => `  ${v.rule} @ ${v.path} — ${v.hint}`)
+                        .join('\n');
+                    const extra = violations.length > 10
+                        ? `\n  ...and ${violations.length - 10} more.`
+                        : '';
+                    throw new Error(
+                        `Validation gate FAILED — ${violations.length} violation(s):\n${lines}${extra}`,
+                    );
+                }
+
+                return {
+                    status: 'pass',
+                    summary: {
+                        directories_checked: dirCount,
+                        files_checked: fileCount,
+                        violations: 0,
                         ...(truncated ? { warning: `Scan truncated at ${MAX_ENTRIES} entries` } : {}),
                     },
                 };

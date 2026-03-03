@@ -11,7 +11,7 @@
 
 import type { ILLMProvider } from 'gears';
 import { AIPromptService, PromptContributorRegistry, PromptEngine } from 'gears/agentic';
-import type { Agent, AgentAction, AgentContext, FsOp, WakeMode } from './types.js';
+import type { Agent, AgentAction, AgentContext, CoordinateAction, FsOp, WakeMode } from './types.js';
 import type { IvyPromptContext } from './packs/types.js';
 import type { Sandbox } from './sandbox/Sandbox.js';
 import { bootInternalPacks } from './packs/index.js';
@@ -32,10 +32,14 @@ export interface LLMAgentConfig {
 interface ThinkResult {
     speak?: string;
     dm?: { to: string; text: string };
+    coordinate?: { to: string; text: string };
     note?: string;
     configure?: {
         wakeOn?: WakeMode;
         heartbeatMs?: number | null;
+        publicContextWindow?: number;
+        privateContextWindow?: number;
+        internalContextWindow?: number;
     };
     fs?: { op: string; path: string; content?: string; dest?: string; recursive?: boolean };
     calls?: Array<{ tool: string; args?: Record<string, unknown> }>;
@@ -57,6 +61,15 @@ const RESPONSE_SCHEMA = {
             required: ['to', 'text'],
             description: 'Send a private message to a specific participant.',
         },
+        coordinate: {
+            type: 'object',
+            properties: {
+                to: { type: 'string', description: 'Receiving agent handle, e.g. "@nova".' },
+                text: { type: 'string', description: 'Handoff message content.' },
+            },
+            required: ['to', 'text'],
+            description: 'Semantic alias for dm: signal an inter-agent work handoff. Routed identically to dm.',
+        },
         note: {
             type: 'string',
             description: 'Write a private self-note visible only to you across ticks.',
@@ -73,8 +86,23 @@ const RESPONSE_SCHEMA = {
                     type: ['number', 'null'],
                     description: 'Milliseconds between scheduled checks. null disables the heartbeat.',
                 },
+                publicContextWindow: {
+                    type: 'number',
+                    minimum: 5,
+                    description: 'Max public messages to include in context (min 5).',
+                },
+                privateContextWindow: {
+                    type: 'number',
+                    minimum: 3,
+                    description: 'Max private DMs to include in context (min 3).',
+                },
+                internalContextWindow: {
+                    type: 'number',
+                    minimum: 3,
+                    description: 'Max internal notes to include in context (min 3).',
+                },
             },
-            description: 'Adjust your wake and heartbeat settings.',
+            description: 'Adjust your wake, heartbeat, and context window settings.',
         },
         fs: {
             type: 'object',
@@ -158,6 +186,9 @@ export class LLMAgent implements Agent {
         if (result.dm) {
             actions.push({ type: 'dm', to: result.dm.to, text: result.dm.text });
         }
+        if (result.coordinate) {
+            actions.push({ type: 'coordinate', to: result.coordinate.to, text: result.coordinate.text } satisfies CoordinateAction);
+        }
         if (result.note?.trim()) {
             actions.push({ type: 'note', text: result.note.trim() });
         }
@@ -187,6 +218,11 @@ export class LLMAgent implements Agent {
             if (typeof raw.dm.to !== 'string' || !raw.dm.to.trim()) throw new Error('LLM output dm.to must be a non-empty string');
             if (typeof raw.dm.text !== 'string' || !raw.dm.text.trim()) throw new Error('LLM output dm.text must be a non-empty string');
         }
+        if (raw.coordinate !== undefined) {
+            if (typeof raw.coordinate !== 'object' || raw.coordinate === null) throw new Error('LLM output coordinate must be an object');
+            if (typeof raw.coordinate.to !== 'string' || !raw.coordinate.to.trim()) throw new Error('LLM output coordinate.to must be a non-empty string');
+            if (typeof raw.coordinate.text !== 'string' || !raw.coordinate.text.trim()) throw new Error('LLM output coordinate.text must be a non-empty string');
+        }
         if (raw.note !== undefined) {
             if (typeof raw.note !== 'string') throw new Error('LLM output note must be a string');
             if (!raw.note.trim()) throw new Error('LLM output note must be non-empty when present');
@@ -200,6 +236,18 @@ export class LLMAgent implements Agent {
             if (c.heartbeatMs !== undefined && c.heartbeatMs !== null
                 && (typeof c.heartbeatMs !== 'number' || c.heartbeatMs <= 0)) {
                 throw new Error('LLM output configure.heartbeatMs must be a positive number or null');
+            }
+            for (const [field, min] of [
+                ['publicContextWindow', 5],
+                ['privateContextWindow', 3],
+                ['internalContextWindow', 3],
+            ] as const) {
+                const v = (c as Record<string, unknown>)[field];
+                if (v !== undefined) {
+                    if (typeof v !== 'number' || !Number.isFinite(v) || Math.floor(v) < min) {
+                        throw new Error(`LLM output configure.${field} must be an integer >= ${min}`);
+                    }
+                }
             }
         }
         if (raw.fs !== undefined) {

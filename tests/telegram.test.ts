@@ -183,6 +183,181 @@ describe('TelegramParticipant slash commands', () => {
         const [, payload] = events.emit.mock.calls[0];
         expect(payload.message).toContain('/foo');
         expect(payload.message).toContain('not recognized');
+        // Available commands are listed dynamically
+        expect(payload.message).toContain('/pm');
+        expect(payload.message).toContain('/mute');
+        expect(payload.message).toContain('/filters');
+    });
+});
+
+// ─── Filter commands ─────────────────────────────────────────────
+
+describe('TelegramParticipant filter commands', () => {
+    let room: Room;
+    let events: ReturnType<typeof makeEventBus>;
+    let participant: TelegramParticipant;
+    let nova: { handle: string; displayName: string; receive: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+        room = makeRoom();
+        events = makeEventBus();
+        participant = new TelegramParticipant(
+            { handle: '@architect', displayName: 'Architect' },
+            room, events as any,
+        );
+        nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(participant);
+        room.join(nova);
+        participant.start();
+    });
+
+    // ── /mute ───────────────────────────────────────────────────
+
+    it('/mute @handle sends confirmation to Telegram', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
+
+        const [event, payload] = events.emit.mock.calls[0];
+        expect(event).toBe('notification:send');
+        expect(payload.message).toContain('@nova');
+        expect(payload.message).toContain('muted');
+    });
+
+    it('/mute @handle blocks subsequent room messages from that handle', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', 'hello everyone'));
+
+        expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('/mute with no handle sends usage hint', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('/mute @handle');
+    });
+
+    it('/mute does not block messages from other handles', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
+        events.emit.mockClear();
+
+        const ivy = { handle: '@ivy', displayName: 'Ivy', receive: vi.fn() };
+        room.join(ivy);
+        participant.receive(msg('@ivy', 'hello from ivy'));
+
+        expect(events.emit).toHaveBeenCalledOnce();
+    });
+
+    // ── /unmute ─────────────────────────────────────────────────
+
+    it('/unmute @handle restores a muted handle', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
+        events.trigger('notification:receive', { kind: 'command', key: 'unmute', text: '/unmute @nova' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', 'back again'));
+
+        expect(events.emit).toHaveBeenCalledOnce();
+    });
+
+    it('/unmute with no arg clears all mutes', () => {
+        const ivy = { handle: '@ivy', displayName: 'Ivy', receive: vi.fn() };
+        room.join(ivy);
+
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @ivy' });
+        events.trigger('notification:receive', { kind: 'command', key: 'unmute', text: '/unmute' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', 'nova back'));
+        participant.receive(msg('@ivy', 'ivy back'));
+
+        expect(events.emit).toHaveBeenCalledTimes(2);
+    });
+
+    it('/unmute with no arg sends all-clear confirmation', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'unmute', text: '/unmute' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('All mutes cleared');
+    });
+
+    // ── /focus ──────────────────────────────────────────────────
+
+    it('/focus sends confirmation to Telegram', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('Focus mode ON');
+    });
+
+    it('/focus blocks broadcasts that do not mention self', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', '@ivy check this out', '*'));
+
+        expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('/focus passes broadcasts that mention self', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', '@architect look at this', '*'));
+
+        expect(events.emit).toHaveBeenCalledOnce();
+    });
+
+    it('/focus passes DMs addressed to self', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', 'private message', '@architect'));
+
+        expect(events.emit).toHaveBeenCalledOnce();
+    });
+
+    // ── /unfocus ────────────────────────────────────────────────
+
+    it('/unfocus restores all traffic after focus', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+        events.trigger('notification:receive', { kind: 'command', key: 'unfocus', text: '/unfocus' });
+        events.emit.mockClear();
+
+        participant.receive(msg('@nova', 'unrelated message', '*'));
+
+        expect(events.emit).toHaveBeenCalledOnce();
+    });
+
+    it('/unfocus sends confirmation to Telegram', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'unfocus', text: '/unfocus' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('Focus mode OFF');
+    });
+
+    // ── /filters ────────────────────────────────────────────────
+
+    it('/filters shows focus state and mute list', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+        events.emit.mockClear();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'filters', text: '/filters' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('Focus mode: ON');
+        expect(payload.message).toContain('@nova');
+    });
+
+    it('/filters shows default state when no filters set', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'filters', text: '/filters' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('Focus mode: OFF');
+        expect(payload.message).toContain('Muted: none');
     });
 });
 

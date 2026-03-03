@@ -11,6 +11,13 @@ import { ValidateToolPack } from './packs/ValidateToolPack.js';
 import { JsonToolPack } from './packs/JsonToolPack.js';
 import { ScheduleToolPack } from './packs/ScheduleToolPack.js';
 import { HistoryToolPack } from './packs/HistoryToolPack.js';
+import { LedgerToolPack } from './packs/LedgerToolPack.js';
+import { SopToolPack } from './packs/SopToolPack.js';
+import { ManifestToolPack } from './packs/ManifestToolPack.js';
+import { BatchToolPack } from './packs/BatchToolPack.js';
+import { SnapshotToolPack } from './packs/SnapshotToolPack.js';
+import { ContextToolPack } from './packs/ContextToolPack.js';
+import { IndexToolPack } from './packs/IndexToolPack.js';
 import { logCommand } from './logCommand.js';
 import type { Room } from './Room.js';
 
@@ -34,6 +41,14 @@ export { ValidateToolPack } from './packs/ValidateToolPack.js';
 export { JsonToolPack } from './packs/JsonToolPack.js';
 export { ScheduleToolPack } from './packs/ScheduleToolPack.js';
 export { HistoryToolPack } from './packs/HistoryToolPack.js';
+export { LedgerToolPack } from './packs/LedgerToolPack.js';
+export type { LedgerTask } from './packs/LedgerToolPack.js';
+export { SopToolPack } from './packs/SopToolPack.js';
+export { ManifestToolPack } from './packs/ManifestToolPack.js';
+export { BatchToolPack } from './packs/BatchToolPack.js';
+export { SnapshotToolPack } from './packs/SnapshotToolPack.js';
+export { ContextToolPack } from './packs/ContextToolPack.js';
+export { IndexToolPack } from './packs/IndexToolPack.js';
 
 const bundle: Bundle = (() => {
     // Instance-scoped lifecycle state — safe even if multiple app instances exist.
@@ -77,6 +92,13 @@ const bundle: Bundle = (() => {
                 sandbox.mount(new ValidateToolPack(sandbox).createLayer());
                 sandbox.mount(new JsonToolPack(sandbox).createLayer());
                 sandbox.mount(new HistoryToolPack(room).createLayer());
+                sandbox.mount(new LedgerToolPack(sandbox).createLayer());
+                sandbox.mount(new SopToolPack(sandbox).createLayer());
+                sandbox.mount(new ManifestToolPack(sandbox).createLayer());
+                sandbox.mount(new BatchToolPack(sandbox).createLayer());
+                sandbox.mount(new SnapshotToolPack(sandbox).createLayer());
+                sandbox.mount(new ContextToolPack(sandbox).createLayer());
+                sandbox.mount(new IndexToolPack(sandbox).createLayer());
 
                 const parseCallJson = (raw: string): Record<string, unknown> => {
                     const arrow = raw.indexOf(' → ');

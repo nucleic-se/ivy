@@ -15,8 +15,8 @@
  * qualifying messages trigger an immediate wake signal.
  */
 
-import type { ILogger } from 'gears';
-import type { Agent, AgentAction, AgentContext, CallAction, Message, Participant, WakeMode } from './types.js';
+import type { ILogger, IStore } from 'gears';
+import type { Agent, AgentAction, AgentContext, CallAction, CoordinateAction, Message, Participant, WakeMode } from './types.js';
 import type { Room } from './Room.js';
 import type { IvyActionHandler, IvyParticipantPackContext, IvyRoutingGuard, RoutableAction } from './packs/types.js';
 import type { Sandbox } from './sandbox/Sandbox.js';
@@ -30,6 +30,14 @@ import {
     DEFAULT_PARTICIPANT_PACKS,
     DEFAULT_WAKE_MODE,
 } from './constants.js';
+
+interface PersistedAgentConfig {
+    wakeMode?: WakeMode;
+    heartbeatMs?: number | null;
+    publicContextWindow?: number;
+    privateContextWindow?: number;
+    internalContextWindow?: number;
+}
 
 export interface AgentParticipantConfig {
     /** Max recent public (broadcast) messages to include as context. Default: DEFAULT_PUBLIC_CONTEXT_WINDOW */
@@ -46,6 +54,12 @@ export interface AgentParticipantConfig {
     packs?: string[];
     /** Sandbox to expose to the agent via fs/call action handlers. */
     sandbox?: Sandbox;
+    /**
+     * IStore for persisting runtime config (wakeMode, heartbeatMs, context windows) across restarts.
+     * Gracefully absent: config becomes ephemeral (no change to in-process behaviour).
+     * Explicit constructor config always overrides any persisted value.
+     */
+    store?: IStore;
 }
 
 export class AgentParticipant implements Participant {
@@ -65,6 +79,15 @@ export class AgentParticipant implements Participant {
     private wakeMode: WakeMode;
     private heartbeatMs: number | null;
 
+    // Config persistence
+    private readonly store: IStore | null;
+    private readonly storeKey: string;
+    /** Tracks which config fields were explicitly set in the constructor (these override persisted values). */
+    private readonly explicitConfig: Pick<AgentParticipantConfig,
+        'wakeMode' | 'heartbeatMs' | 'publicContextWindow' | 'privateContextWindow' | 'internalContextWindow'
+    >;
+    private configLoaded = false;
+
     // Stimulus queue + wake signal
     private queue: Message[] = [];
     private wakeResolve: (() => void) | null = null;
@@ -83,6 +106,15 @@ export class AgentParticipant implements Participant {
         this.internalContextWindow = config?.internalContextWindow ?? DEFAULT_INTERNAL_CONTEXT_WINDOW;
         this.wakeMode = config?.wakeMode ?? DEFAULT_WAKE_MODE;
         this.heartbeatMs = config?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+        this.store = config?.store ?? null;
+        this.storeKey = `ivy:agent:${this.handle}:config`;
+        this.explicitConfig = {
+            wakeMode: config?.wakeMode,
+            heartbeatMs: config?.heartbeatMs,
+            publicContextWindow: config?.publicContextWindow,
+            privateContextWindow: config?.privateContextWindow,
+            internalContextWindow: config?.internalContextWindow,
+        };
         this.logger = logger;
         const packCtx: IvyParticipantPackContext = {
             registerRoutingGuard: (guard) => { this.routingGuards.push(guard); },
@@ -152,6 +184,16 @@ export class AgentParticipant implements Participant {
             await this.waitForWake();
             if (!this.running) break;
 
+            // Load persisted config once, after the first qualifying wake but before the
+            // first process(). Placed here (not before waitForWake) so the loop's first
+            // await is always waitForWake itself — preserving wake-mode filtering for
+            // messages that arrive synchronously after start().
+            if (!this.configLoaded) {
+                this.configLoaded = true;
+                await this.loadPersistedConfig();
+                if (!this.running) break;
+            }
+
             // Stimuli may be empty on a pure heartbeat tick — agent sees the empty list.
             const stimuli = this.queue.splice(0);
             try {
@@ -160,6 +202,43 @@ export class AgentParticipant implements Participant {
                 this.logger?.error(`${this.displayName} think error`, { error: (err as Error).message });
             }
         }
+    }
+
+    /**
+     * Load persisted runtime config from IStore on first start.
+     * Skips any field that was explicitly provided in the constructor config.
+     */
+    private async loadPersistedConfig(): Promise<void> {
+        if (!this.store) return;
+        let saved: PersistedAgentConfig | null;
+        try { saved = await this.store.get<PersistedAgentConfig>(this.storeKey); }
+        catch { return; }
+        if (!saved) return;
+        if (saved.wakeMode !== undefined && this.explicitConfig.wakeMode === undefined)
+            this.wakeMode = saved.wakeMode;
+        if (saved.heartbeatMs !== undefined && this.explicitConfig.heartbeatMs === undefined)
+            this.heartbeatMs = saved.heartbeatMs;
+        if (saved.publicContextWindow !== undefined && this.explicitConfig.publicContextWindow === undefined)
+            this.publicContextWindow = Math.max(5, saved.publicContextWindow);
+        if (saved.privateContextWindow !== undefined && this.explicitConfig.privateContextWindow === undefined)
+            this.privateContextWindow = Math.max(3, saved.privateContextWindow);
+        if (saved.internalContextWindow !== undefined && this.explicitConfig.internalContextWindow === undefined)
+            this.internalContextWindow = Math.max(3, saved.internalContextWindow);
+    }
+
+    /** Snapshot current runtime config to IStore (fire-and-forget). */
+    private persistConfig(): void {
+        if (!this.store) return;
+        const snapshot: PersistedAgentConfig = {
+            wakeMode: this.wakeMode,
+            heartbeatMs: this.heartbeatMs,
+            publicContextWindow: this.publicContextWindow,
+            privateContextWindow: this.privateContextWindow,
+            internalContextWindow: this.internalContextWindow,
+        };
+        this.store.set(this.storeKey, snapshot).catch(() => {
+            this.logger?.warn(`${this.displayName} failed to persist agent config`);
+        });
     }
 
     /**
@@ -224,12 +303,21 @@ export class AgentParticipant implements Participant {
         if (!this.running || this.runVersion !== versionAtStart) return;
 
         // Configure: apply state changes immediately (order-preserving).
+        let configured = false;
         for (const action of actions) {
             if (action.type === 'configure') {
+                configured = true;
                 if (action.wakeOn !== undefined) this.wakeMode = action.wakeOn;
                 if (action.heartbeatMs !== undefined) this.heartbeatMs = action.heartbeatMs;
+                if (action.publicContextWindow !== undefined)
+                    this.publicContextWindow = Math.max(5, Math.floor(action.publicContextWindow));
+                if (action.privateContextWindow !== undefined)
+                    this.privateContextWindow = Math.max(3, Math.floor(action.privateContextWindow));
+                if (action.internalContextWindow !== undefined)
+                    this.internalContextWindow = Math.max(3, Math.floor(action.internalContextWindow));
             }
         }
+        if (configured) this.persistConfig();
 
         // Note: write private self-notes directly (bypass routing guards).
         for (const action of actions) {
@@ -238,50 +326,73 @@ export class AgentParticipant implements Participant {
             }
         }
 
-        // Fs / Call: dispatch to registered action handlers; post result as an internal note.
-        // For call actions: if one fails and more remain in the batch, post a batch-abort note
-        // and stop executing further call actions. The fs action (always single) is unaffected.
-        const callActions = actions.filter(a => a.type === 'call');
-        let callIndex = 0;
-        let callBatchAborted = false;
-
+        // Fs: dispatch to registered action handler; post result as an internal note.
         for (const action of actions) {
-            if (action.type !== 'fs' && action.type !== 'call') continue;
-            if (action.type === 'call' && callBatchAborted) continue;
-            const handler = this.actionHandlers.get(action.type);
+            if (action.type !== 'fs') continue;
+            const handler = this.actionHandlers.get('fs');
             if (!handler) {
-                this.logger?.warn(`${this.displayName} has no handler for action type "${action.type}"`);
-                if (action.type === 'call') callIndex++;
+                this.logger?.warn(`${this.displayName} has no handler for action type "fs"`);
                 continue;
             }
             let result: string;
-            let failed = false;
             try {
                 result = await handler.handle(action, this.handle);
             } catch (err) {
                 result = `Error: ${(err as Error).message}`;
-                failed = true;
-                this.logger?.warn(`${this.displayName} action handler error`, { type: action.type, error: (err as Error).message });
+                this.logger?.warn(`${this.displayName} fs action handler error`, { error: (err as Error).message });
             }
             if (!this.running || this.runVersion !== versionAtStart) return;
-            this.room.note(this.handle, result);
-
-            if (failed && action.type === 'call') {
-                const skipped = callActions.length - callIndex - 1;
-                if (skipped > 0) {
-                    callBatchAborted = true;
-                    this.room.note(
-                        this.handle,
-                        `[batch] ${skipped} remaining call(s) skipped after error in \`${(action as CallAction).tool}\`. Re-read state before retrying.`,
-                    );
-                }
-            }
-            if (action.type === 'call') callIndex++;
+            this.room.note(this.handle, result!);
         }
 
-        // Speak / DM: pass through routing guards before dispatch.
+        // Call: execute batch, collect all results, post as a single note.
+        // On first failure, remaining calls are skipped (batch-abort). All
+        // results — including the abort notice — appear in the same note so
+        // the agent receives a single coherent summary rather than N fragments.
+        const callActions = actions.filter((a): a is CallAction => a.type === 'call');
+        if (callActions.length > 0) {
+            const handler = this.actionHandlers.get('call');
+            interface CallEntry { tool: string; result: string; failed: boolean }
+            const entries: CallEntry[] = [];
+            let abortedAt = -1;
+
+            for (let i = 0; i < callActions.length; i++) {
+                const action = callActions[i]!;
+                if (!handler) {
+                    this.logger?.warn(`${this.displayName} has no handler for action type "call"`);
+                    break;
+                }
+                let result: string;
+                let failed = false;
+                try {
+                    result = await handler.handle(action, this.handle);
+                } catch (err) {
+                    result = `Error: ${(err as Error).message}`;
+                    failed = true;
+                    this.logger?.warn(`${this.displayName} call action handler error`, { tool: action.tool, error: (err as Error).message });
+                }
+                if (!this.running || this.runVersion !== versionAtStart) return;
+                entries.push({ tool: action.tool, result: result!, failed });
+                if (failed) { abortedAt = i; break; }
+            }
+
+            // Build the combined note.
+            const lines: string[] = [`[calls: ${callActions.length} op${callActions.length !== 1 ? 's' : ''}]`];
+            for (const e of entries) {
+                lines.push(`${e.failed ? '✗' : '✓'} ${e.tool} → ${e.result}`);
+            }
+            if (abortedAt >= 0) {
+                const skipped = callActions.length - abortedAt - 1;
+                if (skipped > 0) {
+                    lines.push(`[batch] ${skipped} remaining call(s) skipped after error in \`${callActions[abortedAt]!.tool}\`. Re-read state before retrying.`);
+                }
+            }
+            this.room.note(this.handle, lines.join('\n'));
+        }
+
+        // Speak / DM / Coordinate: pass through routing guards before dispatch.
         const routableActions = actions.filter(
-            (a): a is RoutableAction => a.type === 'speak' || a.type === 'dm',
+            (a): a is RoutableAction => a.type === 'speak' || a.type === 'dm' || a.type === 'coordinate',
         );
         if (routableActions.length === 0) return;
 
@@ -322,12 +433,15 @@ export class AgentParticipant implements Participant {
             dmSenders,
             wakeMode: this.wakeMode,
             heartbeatMs: this.heartbeatMs,
+            publicContextWindow: this.publicContextWindow,
+            privateContextWindow: this.privateContextWindow,
+            internalContextWindow: this.internalContextWindow,
         };
     }
 
     private dispatchAction(action: RoutableAction): void {
-        if (action.type === 'dm') {
-            this.room.dm(this.handle, action.to, action.text);
+        if (action.type === 'dm' || action.type === 'coordinate') {
+            this.room.dm(this.handle, (action as CoordinateAction).to, action.text);
         } else {
             this.room.post(this.handle, action.text);
         }
