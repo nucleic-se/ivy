@@ -10,6 +10,7 @@ import { FsToolPack } from './packs/FsToolPack.js';
 import { ValidateToolPack } from './packs/ValidateToolPack.js';
 import { JsonToolPack } from './packs/JsonToolPack.js';
 import { ScheduleToolPack } from './packs/ScheduleToolPack.js';
+import { HistoryToolPack } from './packs/HistoryToolPack.js';
 import { logCommand } from './logCommand.js';
 import type { Room } from './Room.js';
 
@@ -32,6 +33,7 @@ export { FsToolPack } from './packs/FsToolPack.js';
 export { ValidateToolPack } from './packs/ValidateToolPack.js';
 export { JsonToolPack } from './packs/JsonToolPack.js';
 export { ScheduleToolPack } from './packs/ScheduleToolPack.js';
+export { HistoryToolPack } from './packs/HistoryToolPack.js';
 
 const bundle: Bundle = (() => {
     // Instance-scoped lifecycle state — safe even if multiple app instances exist.
@@ -74,6 +76,7 @@ const bundle: Bundle = (() => {
                 sandbox.mount(new FsToolPack(sandbox).createLayer());
                 sandbox.mount(new ValidateToolPack(sandbox).createLayer());
                 sandbox.mount(new JsonToolPack(sandbox).createLayer());
+                sandbox.mount(new HistoryToolPack(room).createLayer());
 
                 const parseCallJson = (raw: string): Record<string, unknown> => {
                     const arrow = raw.indexOf(' → ');
@@ -169,7 +172,7 @@ const bundle: Bundle = (() => {
                     integrityGateRunning = true;
                     try {
                         const scopes = ['/home', '/data'] as const; // Intentionally excludes /tmp (scratch space).
-                        const violations: Array<{ scope: string; rule: string; path: string }> = [];
+                        const violations: Array<{ scope: string; rule: string; path: string; hint: string }> = [];
                         for (const scope of scopes) {
                             const raw = await sandbox.execCall('validate/run', { path: scope }, '@sentinel');
                             const result = parseCallJson(raw);
@@ -179,6 +182,7 @@ const bundle: Bundle = (() => {
                                     scope,
                                     rule: String(v['rule'] ?? 'UNKNOWN'),
                                     path: String(v['path'] ?? scope),
+                                    hint: String(v['hint'] ?? ''),
                                 });
                             }
                         }
@@ -193,7 +197,7 @@ const bundle: Bundle = (() => {
                         }
 
                         const sample = violations.slice(0, 10)
-                            .map(v => `- ${v.scope}: ${v.rule} @ ${v.path}`)
+                            .map(v => `- ${v.rule} @ ${v.path}${v.hint ? ` — ${v.hint}` : ''}`)
                             .join('\n');
                         const summary = [
                             `[integrity:${trigger}] FAIL — ${violations.length} violation(s) across /home and /data.`,

@@ -168,6 +168,135 @@ describe('fetch/get', () => {
     });
 });
 
+// ─── fetch/post ──────────────────────────────────────────────────
+
+describe('fetch/post', () => {
+    let sandbox: Sandbox;
+    let root: string;
+    let cleanup: () => void;
+
+    beforeEach(() => {
+        ({ sandbox, root, cleanup } = tempSandbox());
+    });
+    afterEach(() => cleanup());
+
+    function mount(fetcher: IFetcher) {
+        sandbox.mount(new FetchToolPack(fetcher, sandbox).createLayer());
+    }
+
+    it('returns inline body when no save_path', async () => {
+        mount(makeFetcher({ body: '{"ok":true}', contentType: 'application/json', status: 200 }));
+        const r = await call(sandbox, 'fetch/post', { url: 'https://api.example.com/hook', body: '{}' });
+        expect(r.status).toBe(200);
+        expect(r.content_type).toBe('application/json');
+        expect(r.body).toBe('{"ok":true}');
+        expect(r.truncated).toBe(false);
+        expect(r.path).toBeUndefined();
+    });
+
+    it('saves response to sandbox when save_path given', async () => {
+        mount(makeFetcher({ body: '{"result":"done"}', contentType: 'application/json', status: 201 }));
+        const r = await call(sandbox, 'fetch/post', {
+            url: 'https://api.example.com/create',
+            body: '{"name":"test"}',
+            save_path: '/tmp/response.json',
+        });
+        expect(r.status).toBe(201);
+        expect(r.path).toBe('/tmp/response.json');
+        expect(r.bytes).toBeGreaterThan(0);
+        expect(fs.existsSync(path.join(root, 'tmp', 'response.json'))).toBe(true);
+        expect(r.body).toBeUndefined();
+    });
+
+    it('uses application/json content-type by default', async () => {
+        let capturedOptions: any;
+        const fetcher: IFetcher = {
+            get: async () => { throw new Error('not used'); },
+            post: async (_url, _body, options) => {
+                capturedOptions = options;
+                return { body: 'ok', status: 200, headers: {}, contentType: 'text/plain' };
+            },
+        };
+        mount(fetcher);
+        await call(sandbox, 'fetch/post', { url: 'https://example.com/', body: '{}' });
+        expect(capturedOptions.headers['Content-Type']).toBe('application/json');
+    });
+
+    it('forwards custom content_type and headers', async () => {
+        let capturedOptions: any;
+        const fetcher: IFetcher = {
+            get: async () => { throw new Error('not used'); },
+            post: async (_url, _body, options) => {
+                capturedOptions = options;
+                return { body: 'ok', status: 200, headers: {}, contentType: 'text/plain' };
+            },
+        };
+        mount(fetcher);
+        await call(sandbox, 'fetch/post', {
+            url: 'https://example.com/',
+            body: 'data',
+            content_type: 'text/plain',
+            headers: { 'X-Token': 'abc' },
+        });
+        expect(capturedOptions.headers['Content-Type']).toBe('text/plain');
+        expect(capturedOptions.headers['X-Token']).toBe('abc');
+    });
+
+    it('converts HTML response to Markdown when save_path given', async () => {
+        mount(makeFetcher()); // default fetcher returns HTML
+        const r = await call(sandbox, 'fetch/post', {
+            url: 'https://example.com/',
+            body: '{}',
+            save_path: '/tmp/result.md',
+        });
+        expect(r.converted).toBe(true);
+        const content = fs.readFileSync(path.join(root, 'tmp', 'result.md'), 'utf-8');
+        expect(content).toContain('Hello');
+    });
+
+    it('skips HTML conversion when save_path + raw=true', async () => {
+        const html = '<html><body><p>raw</p></body></html>';
+        mount(makeFetcher({ body: html, contentType: 'text/html' }));
+        const r = await call(sandbox, 'fetch/post', {
+            url: 'https://example.com/',
+            body: '{}',
+            save_path: '/tmp/raw.html',
+            raw: true,
+        });
+        expect(r.converted).toBe(false);
+        expect(fs.readFileSync(path.join(root, 'tmp', 'raw.html'), 'utf-8')).toBe(html);
+    });
+
+    it('truncates large inline responses', async () => {
+        const bigBody = 'x'.repeat(8 * 1024); // 8 KB > 4 KB inline cap
+        mount(makeFetcher({ body: bigBody, contentType: 'application/json', status: 200 }));
+        const r = await call(sandbox, 'fetch/post', { url: 'https://example.com/', body: '{}' });
+        expect(r.truncated).toBe(true);
+        expect(r.body.length).toBe(4 * 1024);
+    });
+
+    it('rejects non-http/https URLs', async () => {
+        mount(makeFetcher());
+        await expect(call(sandbox, 'fetch/post', { url: 'ftp://example.com', body: '{}' }))
+            .rejects.toThrow(/http/);
+    });
+
+    it('rejects save_path in read-only zone', async () => {
+        mount(makeFetcher());
+        await expect(call(sandbox, 'fetch/post', {
+            url: 'https://example.com/',
+            body: '{}',
+            save_path: '/tools/bad.json',
+        })).rejects.toThrow(/read-only/);
+    });
+
+    it('tool is discoverable via ls /tools/fetch', async () => {
+        mount(makeFetcher());
+        const result = await sandbox.execFs({ type: 'fs', op: 'ls', path: '/tools/fetch' });
+        expect(result).toContain('f  post.json');
+    });
+});
+
 // ─── text/to_markdown ────────────────────────────────────────────
 
 describe('text/to_markdown', () => {

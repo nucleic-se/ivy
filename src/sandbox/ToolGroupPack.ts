@@ -50,6 +50,8 @@ interface ToolManifestJson {
     example: string;
 }
 
+const SAFE_GROUP_NAME = /^[a-zA-Z0-9_-]+$/;
+
 // ─── Layer ───────────────────────────────────────────────────────
 
 class ToolGroupLayer implements SandboxLayer {
@@ -159,7 +161,11 @@ export class ToolGroupPack {
     constructor(
         readonly groupName: string,
         private readonly tools: Tool[],
-    ) {}
+    ) {
+        if (!SAFE_GROUP_NAME.test(groupName)) {
+            throw new Error(`Tool group name must match [a-zA-Z0-9_-], got: "${groupName}"`);
+        }
+    }
 
     createLayer(): SandboxLayer {
         return new ToolGroupLayer(this.groupName, this.tools);

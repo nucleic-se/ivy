@@ -23,15 +23,21 @@ import type { Sandbox } from './sandbox/Sandbox.js';
 import { bootInternalParticipantPacks } from './packs/participant.js';
 import { SandboxParticipantPack } from './packs/sandbox-participant.js';
 import {
-    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_PUBLIC_CONTEXT_WINDOW,
+    DEFAULT_PRIVATE_CONTEXT_WINDOW,
+    DEFAULT_INTERNAL_CONTEXT_WINDOW,
     DEFAULT_HEARTBEAT_MS,
     DEFAULT_PARTICIPANT_PACKS,
     DEFAULT_WAKE_MODE,
 } from './constants.js';
 
 export interface AgentParticipantConfig {
-    /** Max recent public messages to include as context. Default from src/constants.ts */
-    contextWindow?: number;
+    /** Max recent public (broadcast) messages to include as context. Default: DEFAULT_PUBLIC_CONTEXT_WINDOW */
+    publicContextWindow?: number;
+    /** Max recent private DMs to include as context. Default: DEFAULT_PRIVATE_CONTEXT_WINDOW */
+    privateContextWindow?: number;
+    /** Max recent internal notes/tool results to include as context. Default: DEFAULT_INTERNAL_CONTEXT_WINDOW */
+    internalContextWindow?: number;
     /** Initial wake-on-message setting. Default from src/constants.ts */
     wakeMode?: WakeMode;
     /** Initial heartbeat interval in ms. null = disabled. Default from src/constants.ts */
@@ -49,7 +55,9 @@ export class AgentParticipant implements Participant {
     private agent: Agent;
     private room: Room;
     private logger?: ILogger;
-    private contextWindow: number;
+    private publicContextWindow: number;
+    private privateContextWindow: number;
+    private internalContextWindow: number;
     private routingGuards: IvyRoutingGuard[] = [];
     private actionHandlers: Map<string, IvyActionHandler> = new Map();
 
@@ -70,7 +78,9 @@ export class AgentParticipant implements Participant {
         this.handle = agent.handle;
         this.displayName = agent.displayName;
         this.room = room;
-        this.contextWindow = config?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+        this.publicContextWindow   = config?.publicContextWindow   ?? DEFAULT_PUBLIC_CONTEXT_WINDOW;
+        this.privateContextWindow  = config?.privateContextWindow  ?? DEFAULT_PRIVATE_CONTEXT_WINDOW;
+        this.internalContextWindow = config?.internalContextWindow ?? DEFAULT_INTERNAL_CONTEXT_WINDOW;
         this.wakeMode = config?.wakeMode ?? DEFAULT_WAKE_MODE;
         this.heartbeatMs = config?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
         this.logger = logger;
@@ -290,11 +300,11 @@ export class AgentParticipant implements Participant {
         // Stimuli are already persisted in the log by the time we get here, so exclude
         // them from history to avoid showing the same message in both sections.
         const stimulusIds = new Set(stimuli.map(m => m.id));
-        const publicMessages = this.room.getPublic(this.contextWindow)
+        const publicMessages = this.room.getPublic(this.publicContextWindow)
             .filter(m => !stimulusIds.has(m.id));
-        const privateMessages = this.room.getPrivate(this.handle, Math.floor(this.contextWindow / 2))
+        const privateMessages = this.room.getPrivate(this.handle, this.privateContextWindow)
             .filter(m => !stimulusIds.has(m.id));
-        const internalMessages = this.room.getInternal(this.handle, Math.floor(this.contextWindow / 2))
+        const internalMessages = this.room.getInternal(this.handle, this.internalContextWindow)
             .filter(m => !stimulusIds.has(m.id));
 
         const mentionPattern = new RegExp(`(^|\\s)${escapeRegExp(this.handle)}(\\b|\\s|$)`);

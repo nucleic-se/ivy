@@ -231,11 +231,14 @@ Results arrive as **internal notes on your next wake**, one per call. If a call 
 | Group | Tool | What it does |
 |---|---|---|
 | `text/*` | `read`, `write`, `insert`, `replace`, `delete_lines`, `search`, `find`, `grep`, `to_markdown`, `tree`, `patch` | Rich text editing with 1-based line numbers |
-| `fetch/get` | — | Fetch a URL; HTML is auto-converted to Markdown; saves to `/tmp/<md5(url)>.md` by default |
+| `fetch/get` | — | Fetch a URL; HTML auto-converted to Markdown; saves to `/tmp/<md5(url)>.md` by default |
+| `fetch/post` | — | POST to a URL; returns first 4 KB inline or saves to `save_path` |
 | `fs/diff` | — | Unified diff between two sandbox files |
 | `json/*` | `get`, `set`, `del`, `validate` | JSON Pointer access + JSON Schema validation |
 | `validate/run` | — | Compliance scan (index, manifests, broken refs, context schema) |
 | `schedule/*` | `set`, `list`, `cancel` | Cron and one-shot timers, persistent across restarts |
+| `history/view` | — | Paginated room history; `type=public\|private\|internal`; `before=` for pagination |
+| `history/search` | — | Text search; `type=public\|private\|all`; never exposes messages you cannot see |
 
 ---
 

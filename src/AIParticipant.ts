@@ -43,7 +43,9 @@ export class AIParticipant implements Participant {
         }, llm);
 
         this.inner = new AgentParticipant(agent, room, {
-            contextWindow: config.contextWindow,
+            publicContextWindow:   config.contextWindow,
+            privateContextWindow:  config.contextWindow ? Math.floor(config.contextWindow / 2) : undefined,
+            internalContextWindow: config.contextWindow ? Math.floor(config.contextWindow / 2) : undefined,
             wakeMode: config.wakeMode,
             heartbeatMs: config.heartbeatMs,
         }, logger);

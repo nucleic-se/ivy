@@ -29,9 +29,10 @@ const WakeContextContributor: IPromptContributor<IvyPromptContext> = {
     contribute(ctx: IvyPromptContext): PromptSection[] {
         const { wakeMode, heartbeatMs } = ctx.context;
         const heartbeatDesc = heartbeatMs != null ? `every ${heartbeatMs}ms` : 'off';
+        const now = new Date().toISOString().replace('T', ' ').replace('Z', ' UTC');
         const text = [
             '## Attention settings',
-            `Wake on: ${wakeMode} | Heartbeat: ${heartbeatDesc}`,
+            `Date: ${now} | Wake on: ${wakeMode} | Heartbeat: ${heartbeatDesc}`,
             'Use the "configure" field to adjust these at any time.',
         ].join('\n');
         return [section('core.wake-context', text, 85, false, 'constraint')];

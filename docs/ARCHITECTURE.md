@@ -205,11 +205,12 @@ Call: `calls: [{ "tool": "text/write", "args": {...} }]` — up to 5 calls per t
 | Group | Tools | Description |
 |---|---|---|
 | `text/*` | `read`, `write`, `insert`, `replace`, `delete_lines`, `search`, `find`, `grep`, `to_markdown`, `tree`, `patch` | Rich text/file editing with 1-based line numbers |
-| `fetch/*` | `get` | HTTP fetch — saves response to sandbox; HTML auto-converted to Markdown via Defuddle; default path `/tmp/<md5(url)>.md` |
+| `fetch/*` | `get`, `post` | HTTP fetch/post — saves to sandbox or returns inline; HTML auto-converted to Markdown via Defuddle |
 | `fs/*` | `diff` | Unified diff between two sandbox files |
 | `json/*` | `get`, `set`, `del`, `validate` | JSON Pointer read/write/delete + JSON Schema validation |
 | `validate/*` | `run` | Compliance scan (index presence, manifest integrity, broken refs, context schema) |
 | `schedule/*` | `set`, `list`, `cancel` | Cron and one-shot scheduling; per-agent state, survives restarts via IStore |
+| `history/*` | `view`, `search` | Paginated view and text search of room history; privacy-enforced per callerHandle |
 
 ### Human Participant (Telegram Adapter)
 
@@ -230,7 +231,7 @@ bundle.init(app)
 ├── resolves ivy.Room, ILLMProvider, IEventBus, ILogger, IFetcher
 ├── resolves IScheduler and IStore (optional — graceful degradation if absent)
 ├── creates shared Sandbox — one root, per-agent home dirs under /home/<handle>/
-├── mounts tool groups: TextToolPack, FetchToolPack, FsToolPack, ValidateToolPack, JsonToolPack
+├── mounts tool groups: TextToolPack, FetchToolPack, FsToolPack, ValidateToolPack, JsonToolPack, HistoryToolPack
 ├── mounts ScheduleToolPack (per-agent, routed by callerHandle)
 ├── creates LLMAgent instances (Ivy, Nova, Sentinel) — cognitive cores with sandbox prompt contributors
 ├── wraps each in AgentParticipant — room adapters with sandbox action handlers

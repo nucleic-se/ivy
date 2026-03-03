@@ -30,7 +30,7 @@
  *    registered handle (e.g. /home/notes.md) are not subject to the check.
  *    Cross-agent reads (/home/<other>/file) are permitted. callerHandle is optional; when
  *    omitted (internal / test use) the check is skipped.
- * 6. Tool name sanitisation: [a-zA-Z0-9_-] only.
+ * 6. Handle/tool name sanitisation: [a-zA-Z0-9_-] only — enforced on ensureAgentHome() and registerTool().
  * 7. Size limits: reads capped at 512 KB; write content capped at 512 KB.
  * 8. Resilient tool listing: malformed manifests are silently skipped.
  */
@@ -425,6 +425,9 @@ export class Sandbox {
      */
     ensureAgentHome(agentHandle: string): void {
         const handle = agentHandle.replace(/^@/, '');
+        if (!SAFE_TOOL_NAME.test(handle)) {
+            throw new Error(`Agent handle must match [a-zA-Z0-9_-], got: "${handle}"`);
+        }
         this.agentHomes.add(handle);
         fsSync.mkdirSync(path.join(this.root, 'home', handle), { recursive: true });
     }
