@@ -6,8 +6,14 @@ import * as path from 'node:path';
 
 export function requireString(args: Record<string, unknown>, key: string): string {
     const v = args[key];
-    if (typeof v !== 'string') throw new Error(`"${key}" must be a string`);
-    return v;
+    if (typeof v === 'string') return v;
+    // LLMs occasionally emit string arrays; join them rather than hard-rejecting.
+    if (Array.isArray(v) && v.length > 0 && v.every(item => typeof item === 'string')) {
+        return (v as string[]).join('\n');
+    }
+    if (!(key in args) || v === undefined) throw new Error(`missing required argument: "${key}"`);
+    if (v === null) throw new Error(`"${key}" must be a string, got null`);
+    throw new Error(`"${key}" must be a string, got ${typeof v}`);
 }
 
 export function normAgentPath(raw: string): string {

@@ -25,7 +25,7 @@ const SandboxIdentityContributor: IPromptContributor<IvyPromptContext> = {
             'Layout:',
             `  ${homePath.padEnd(16)} — your private workspace (read-write, persistent)`,
             '  /tmp              — scratch space (read-write, may be cleared)',
-            '  /tools            — tool groups (read-only; enforced)',
+            '  /tools            — tool groups (read-only; use text/tree to browse)',
             '  /data             — shared read-write space for all agents',
             'Write and rm on / and /tools are rejected by the runtime, not just policy.',
             'File reads and writes are limited to 512 KB.',
@@ -35,41 +35,19 @@ const SandboxIdentityContributor: IPromptContributor<IvyPromptContext> = {
 };
 
 /**
- * Documents the fs action schema and each operation.
- * Sticky — the agent always needs to know how to use the filesystem.
- */
-const SandboxFsContributor: IPromptContributor<IvyPromptContext> = {
-    id: 'sandbox.fs',
-    contribute(): PromptSection[] {
-        const text = [
-            '## Filesystem (fs action)',
-            '{"fs": {"op": "read",  "path": "/home/file.txt"}}                     — read file contents',
-            '{"fs": {"op": "write", "path": "/home/file.txt", "content": "..."}}   — write/overwrite file',
-            '{"fs": {"op": "ls",    "path": "/home"}}                              — list directory',
-            '{"fs": {"op": "mkdir", "path": "/home/project"}}                      — create directory',
-            '{"fs": {"op": "rm",    "path": "/tmp/scratch.txt"}}                                       — remove file or empty directory',
-            '{"fs": {"op": "rm",    "path": "/tmp/dir",         "recursive": true}}                   — remove directory and all contents',
-            '{"fs": {"op": "mv",    "path": "/home/old.txt",  "dest": "/home/new.txt"}}             — move or rename',
-            '{"fs": {"op": "stat",  "path": "/home/file.txt"}}                                     — file metadata',
-            'Results arrive as an internal note on your next wake.',
-        ].join('\n');
-        return [section('sandbox.fs', text, 87, true, 'constraint')];
-    },
-};
-
-/**
  * Documents the calls action schema.
- * Sticky — always present alongside fs so the agent knows both halves of the API.
+ * Sticky — always present so the agent has the invocation contract.
  */
 const SandboxCallContributor: IPromptContributor<IvyPromptContext> = {
     id: 'sandbox.call',
     contribute(): PromptSection[] {
         const text = [
             '## Tool invocation (calls action)',
-            'Single call:  {"calls": [{"tool": "<group>/<name>", "args": {...}}]}',
-            'Batch (atomic): {"calls": [{"tool": "a"}, {"tool": "b"}, {"tool": "c"}]}  — max 10 per tick',
-            'Read a tool\'s manifest before calling: fs read /tools/<group>/<name>.json',
-            'The manifest includes the qualified tool name and a copy-pasteable example.',
+            'Use "calls" ONLY for sandbox tools (e.g. text/read, json/get, schedule/set, fetch/get).',
+            'NEVER put "speak", "dm", "note", "fs", or "configure" in calls — those are top-level response fields.',
+            'Single call:  {"calls": [{"tool": "text/read", "args": {"path": "/home/nova/CONTEXT.md"}}]}',
+            'Batch:        {"calls": [{"tool": "text/write", "args": {...}}, {"tool": "validate/run", "args": {...}}]}  — max 5 per tick',
+            'Read a tool\'s manifest before calling: {"calls": [{"tool": "text/read", "args": {"path": "/tools/<group>/<name>.json"}}]}',
             'Results arrive as internal notes on your next wake. If one call fails the rest are skipped.',
         ].join('\n');
         return [section('sandbox.call', text, 86, true, 'constraint')];
@@ -79,7 +57,7 @@ const SandboxCallContributor: IPromptContributor<IvyPromptContext> = {
 /**
  * Dynamically lists tools available in the sandbox at prompt-build time.
  * Non-sticky — can be dropped under token pressure; the agent can recover
- * with fs ls /tools.
+ * with text/tree on /tools.
  */
 class SandboxToolsContributor implements IPromptContributor<IvyPromptContext> {
     id = 'sandbox.tools';
@@ -186,7 +164,6 @@ export class SandboxAgentPack implements IvyAgentPack {
     register(ctx: { promptRegistry: import('@nucleic-se/gears/agentic').IPromptContributorRegistry<IvyPromptContext> }): void {
         this.sandbox.ensureAgentHome(this.agentHandle);
         ctx.promptRegistry.register(SandboxIdentityContributor);
-        ctx.promptRegistry.register(SandboxFsContributor);
         ctx.promptRegistry.register(SandboxCallContributor);
         ctx.promptRegistry.register(new SandboxToolsContributor(this.sandbox));
         ctx.promptRegistry.register(new AgentsMdContributor(this.sandbox));

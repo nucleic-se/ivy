@@ -212,13 +212,13 @@ export class Sandbox {
             if (layer?.callTool) {
                 return layer.callTool(name, args, tool, callerHandle);
             }
-            throw new Error(`Unknown tool group "${group}". Run: fs ls /tools`);
+            throw new Error(`Unknown tool group "${group}". Run: text/tree with path /tools to list groups.`);
         }
         // Backward compat: flat name registered via registerTool().
         const handler = this.toolHandlers.get(tool);
         if (!handler) {
             const available = [...this.toolHandlers.keys()].join(', ') || 'none';
-            throw new Error(`Unknown tool "${tool}". Available: ${available}. Use fs ls /tools to inspect.`);
+            throw new Error(`Unknown tool "${tool}". Available: ${available}. Use text/tree with path /tools to list tool groups.`);
         }
         const result = await handler(args, callerHandle);
         return `call:${tool} → ${JSON.stringify(result)}`;

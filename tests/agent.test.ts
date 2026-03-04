@@ -179,25 +179,44 @@ describe('LLMAgent', () => {
         expect(result).toEqual([]);
     });
 
-    it('throws when LLM emits calls with more than 10 entries', async () => {
+    it('throws when LLM emits calls with more than 5 entries', async () => {
         const llm = mockLLM({
             calls: [
                 { tool: 'a' }, { tool: 'b' }, { tool: 'c' },
                 { tool: 'd' }, { tool: 'e' }, { tool: 'f' },
-                { tool: 'g' }, { tool: 'h' }, { tool: 'i' },
-                { tool: 'j' }, { tool: 'k' },
             ],
         });
         const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
 
-        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 10 entries per tick');
+        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 5 entries per tick');
     });
 
-    it('throws when LLM emits calls as non-array', async () => {
+    it('coerces calls as non-array single object into an array', async () => {
         const llm = mockLLM({ calls: { tool: 'a' } });
         const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
 
-        await expect(agent.think(baseContext())).rejects.toThrow('calls must be an array');
+        const result = await agent.think(baseContext());
+        expect(result).toEqual([{ type: 'call', tool: 'a', args: undefined }]);
+    });
+
+    it('coerces action names from calls[] into top-level fields', async () => {
+        const llm = mockLLM({
+            calls: [
+                { tool: 'speak', args: { text: 'hello' } },
+                { tool: 'note', args: { text: 'a note' } },
+                { tool: 'dm', args: { to: '@nova', text: 'hi nova' } },
+                { tool: 'text/read', args: { path: '/home/file.txt' } },
+            ],
+        });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toContainEqual({ type: 'speak', text: 'hello' });
+        expect(result).toContainEqual({ type: 'note', text: 'a note' });
+        expect(result).toContainEqual({ type: 'dm', to: '@nova', text: 'hi nova' });
+        expect(result).toContainEqual({ type: 'call', tool: 'text/read', args: { path: '/home/file.txt' } });
+        // sandbox tool stays in calls, action names do not
+        expect(result.filter(a => a.type === 'call')).toHaveLength(1);
     });
 
     it('throws when a calls entry is missing tool', async () => {

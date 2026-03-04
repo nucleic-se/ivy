@@ -6,12 +6,13 @@
  * think() invocation, and returns an action list.
  *
  * At most one speak, one dm, one note, and one configure per response.
- * Multiple tool calls are allowed via the `calls` array (max 10 per tick).
+ * Sandbox tool calls go in the `calls` array (max 5 per tick).
+ * There is no top-level `fs` field — use calls with text/* tools instead.
  */
 
 import type { ILLMProvider } from '@nucleic-se/gears';
 import { AIPromptService, PromptContributorRegistry, PromptEngine } from '@nucleic-se/gears/agentic';
-import type { Agent, AgentAction, AgentContext, CoordinateAction, FsOp, WakeMode } from './types.js';
+import type { Agent, AgentAction, AgentContext, CoordinateAction, WakeMode } from './types.js';
 import type { IvyPromptContext } from './packs/types.js';
 import type { Sandbox } from './sandbox/Sandbox.js';
 import { bootInternalPacks } from './packs/index.js';
@@ -41,7 +42,6 @@ interface ThinkResult {
         privateContextWindow?: number;
         internalContextWindow?: number;
     };
-    fs?: { op: string; path: string; content?: string; dest?: string; recursive?: boolean };
     calls?: Array<{ tool: string; args?: Record<string, unknown> }>;
 }
 
@@ -104,34 +104,18 @@ const RESPONSE_SCHEMA = {
             },
             description: 'Adjust your wake, heartbeat, and context window settings.',
         },
-        fs: {
-            type: 'object',
-            properties: {
-                op: {
-                    type: 'string',
-                    enum: ['read', 'write', 'ls', 'mkdir', 'rm', 'stat', 'mv'],
-                    description: 'Filesystem operation.',
-                },
-                path: { type: 'string', description: 'Absolute path within the sandbox (e.g. "/home/file.txt").' },
-                content: { type: 'string', description: 'File content for write operations.' },
-                dest: { type: 'string', description: 'Destination path for mv operations.' },
-                recursive: { type: 'boolean', description: 'For rm: delete non-empty directories and all their contents.' },
-            },
-            required: ['op', 'path'],
-            description: 'Perform a filesystem operation in the sandbox. Result arrives as an internal note on next wake.',
-        },
         calls: {
             type: 'array',
             items: {
                 type: 'object',
                 properties: {
-                    tool: { type: 'string', description: 'Tool name as listed in /tools.' },
+                    tool: { type: 'string', description: 'Sandbox tool path as listed in /tools (e.g. "text/read", "json/get", "schedule/set"). Never use "dm", "speak", "note", "fs", or "configure" here — those are separate top-level response fields.' },
                     args: { type: 'object', description: 'Arguments to pass to the tool.' },
                 },
                 required: ['tool'],
             },
             maxItems: 5,
-            description: 'Sandbox tool calls to execute this tick. Use multiple entries for atomic multi-step operations (e.g. write prose, update index, flip ledger in one shot). Maximum 10.',
+            description: 'Sandbox tool calls ONLY (e.g. text/read, json/set, schedule/list). NEVER use this for dm, speak, note, fs, or configure — those are top-level fields. Use multiple entries for atomic multi-step operations. Maximum 5.',
         },
     },
     required: [],
@@ -174,7 +158,7 @@ export class LLMAgent implements Agent {
             .llm<ThinkResult>(b => {
                 b.system(this.systemPrompt).schema(RESPONSE_SCHEMA as Record<string, unknown>);
             })
-            .transform((raw: ThinkResult) => this.validateThinkResult(raw))
+            .transform((raw: ThinkResult) => this.validateThinkResult(this.coerceThinkResult(raw)))
             .retry(1)
             .run();
 
@@ -196,14 +180,64 @@ export class LLMAgent implements Agent {
         if (configure !== undefined) {
             actions.push({ type: 'configure', ...configure });
         }
-        if (result.fs) {
-            actions.push({ type: 'fs', op: result.fs.op as FsOp, path: result.fs.path, content: result.fs.content, dest: result.fs.dest, recursive: result.fs.recursive });
-        }
         for (const c of result.calls ?? []) {
             actions.push({ type: 'call', tool: c.tool, args: c.args });
         }
 
         return actions;
+    }
+
+    /**
+     * Rescue common Haiku/small-model mistakes before validation:
+     * - `calls` as a non-array single object → wrap in array
+     * - Top-level action names (speak, dm, note, coordinate, configure) in calls[] → promote to top-level fields
+     */
+    private coerceThinkResult(raw: ThinkResult): ThinkResult {
+        if (typeof raw !== 'object' || raw === null) return raw;
+        const result: ThinkResult = { ...raw };
+
+        // Wrap non-array calls in an array.
+        if (result.calls !== undefined && !Array.isArray(result.calls)) {
+            result.calls = (typeof result.calls === 'object' && result.calls !== null)
+                ? [result.calls as { tool: string; args?: Record<string, unknown> }]
+                : [];
+        }
+
+        if (!Array.isArray(result.calls) || result.calls.length === 0) return result;
+
+        // Lift well-known action names out of calls[] into their proper top-level fields.
+        const remaining: Array<{ tool: string; args?: Record<string, unknown> }> = [];
+        for (const call of result.calls) {
+            if (typeof call !== 'object' || call === null || typeof (call as any).tool !== 'string') {
+                remaining.push(call);
+                continue;
+            }
+            const args = ((call as any).args ?? {}) as Record<string, unknown>;
+            switch ((call as any).tool) {
+                case 'speak':
+                    if (result.speak === undefined && typeof args['text'] === 'string') result.speak = args['text'];
+                    break;
+                case 'note':
+                    if (result.note === undefined && typeof args['text'] === 'string') result.note = args['text'];
+                    break;
+                case 'dm':
+                    if (result.dm === undefined && typeof args['to'] === 'string' && typeof args['text'] === 'string')
+                        result.dm = { to: args['to'], text: args['text'] };
+                    break;
+                case 'coordinate':
+                    if (result.coordinate === undefined && typeof args['to'] === 'string' && typeof args['text'] === 'string')
+                        result.coordinate = { to: args['to'], text: args['text'] };
+                    break;
+                case 'configure':
+                    if (result.configure === undefined && typeof args === 'object')
+                        result.configure = args as ThinkResult['configure'];
+                    break;
+                default:
+                    remaining.push(call);
+            }
+        }
+        result.calls = remaining;
+        return result;
     }
 
     private validateThinkResult(raw: ThinkResult): ThinkResult {
@@ -251,22 +285,11 @@ export class LLMAgent implements Agent {
                 }
             }
         }
-        if (raw.fs !== undefined) {
-            if (typeof raw.fs !== 'object' || raw.fs === null) throw new Error('LLM output fs must be an object');
-            const validOps = ['read', 'write', 'ls', 'mkdir', 'rm', 'stat', 'mv'] as const;
-            if (!validOps.includes(raw.fs.op as typeof validOps[number])) {
-                throw new Error(`LLM output fs.op must be one of: ${validOps.join(', ')}`);
-            }
-            if (typeof raw.fs.path !== 'string' || !raw.fs.path.trim()) throw new Error('LLM output fs.path must be a non-empty string');
-            if (raw.fs.op === 'mv' && (typeof raw.fs.dest !== 'string' || !raw.fs.dest.trim())) {
-                throw new Error('LLM output fs.dest must be a non-empty string for mv');
-            }
-        }
         if (raw.calls !== undefined) {
             if (!Array.isArray(raw.calls))
                 throw new Error('LLM output calls must be an array');
-            if (raw.calls.length > 10)
-                throw new Error('LLM output calls must not exceed 10 entries per tick');
+            if (raw.calls.length > 5)
+                throw new Error('LLM output calls must not exceed 5 entries per tick');
             for (const [i, c] of (raw.calls as unknown[]).entries()) {
                 if (typeof c !== 'object' || c === null)
                     throw new Error(`LLM output calls[${i}] must be an object`);

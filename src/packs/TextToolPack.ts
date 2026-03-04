@@ -48,6 +48,7 @@ import type { Sandbox } from '../sandbox/Sandbox.js';
 import { extractMarkdown } from './html.js';
 import { ToolGroupPack, type Tool } from '../sandbox/ToolGroupPack.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
+import { requireString as requireStringShared, normAgentPath as normAgentPathShared } from './pack-helpers.js';
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -83,15 +84,7 @@ function formatLines(lines: string[], startLine: number, totalLines: number): st
 
 // ─── Argument helpers ────────────────────────────────────────────
 
-function requireString(args: Record<string, unknown>, key: string): string {
-    const v = args[key];
-    if (typeof v === 'string') return v;
-    // LLMs occasionally emit string arrays; join them rather than hard-rejecting.
-    if (Array.isArray(v) && v.length > 0 && v.every(item => typeof item === 'string')) {
-        return (v as string[]).join('\n');
-    }
-    throw new Error(`"${key}" must be a string`);
-}
+const requireString = requireStringShared;
 
 function requireInt(args: Record<string, unknown>, key: string): number {
     const n = Number(args[key]);
@@ -106,11 +99,7 @@ function optInt(args: Record<string, unknown>, key: string): number | undefined 
     return n;
 }
 
-function normAgentPath(raw: string): string {
-    const p = path.normalize(raw);
-    if (!path.isAbsolute(p)) throw new Error(`Path must be absolute, got: ${raw}`);
-    return p;
-}
+const normAgentPath = normAgentPathShared;
 
 // ─── FS helpers ──────────────────────────────────────────────────
 
