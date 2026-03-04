@@ -15,7 +15,7 @@
  * qualifying messages trigger an immediate wake signal.
  */
 
-import type { ILogger, IStore } from 'gears';
+import type { ILogger, IStore } from '@nucleic-se/gears';
 import type { Agent, AgentAction, AgentContext, CallAction, CoordinateAction, Message, Participant, WakeMode } from './types.js';
 import type { Room } from './Room.js';
 import type { IvyActionHandler, IvyParticipantPackContext, IvyRoutingGuard, RoutableAction } from './packs/types.js';
@@ -90,6 +90,7 @@ export class AgentParticipant implements Participant {
 
     // Stimulus queue + wake signal
     private queue: Message[] = [];
+    private wakeRequested = false;
     private wakeResolve: (() => void) | null = null;
     private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
     private running = false;
@@ -133,6 +134,7 @@ export class AgentParticipant implements Participant {
     receive(message: Message): void {
         this.queue.push(message);
         if (this.qualifiesForWake(message)) {
+            this.wakeRequested = true;
             this.wake();
         }
     }
@@ -153,17 +155,15 @@ export class AgentParticipant implements Participant {
      */
     observe(text: string): void {
         this.room.note(this.handle, text);
-        if (this.wakeResolve) {
-            this.clearHeartbeatTimer();
-            this.wakeResolve();
-            this.wakeResolve = null;
-        }
+        this.wakeRequested = true;
+        this.wake();
     }
 
     /** Stop the processing loop and cancel any pending heartbeat. */
     stop(): void {
         this.running = false;
         this.runVersion++;
+        this.wakeRequested = false;
         this.clearHeartbeatTimer();
         if (this.wakeResolve) {
             this.wakeResolve();
@@ -175,6 +175,14 @@ export class AgentParticipant implements Participant {
 
     private async loop(): Promise<void> {
         while (this.running) {
+            // Load persisted config before first sleep so restored heartbeat/wake
+            // settings apply immediately after process start.
+            if (!this.configLoaded) {
+                this.configLoaded = true;
+                await this.loadPersistedConfig();
+                if (!this.running) break;
+            }
+
             // The heartbeat timer is only ever active while we are sleeping here —
             // it is cancelled the moment we wake. Because process() must complete
             // before we call waitForWake() again, heartbeat ticks can never overlap
@@ -183,16 +191,6 @@ export class AgentParticipant implements Participant {
             // you can" behaviour when the LLM is slower than the heartbeat interval.
             await this.waitForWake();
             if (!this.running) break;
-
-            // Load persisted config once, after the first qualifying wake but before the
-            // first process(). Placed here (not before waitForWake) so the loop's first
-            // await is always waitForWake itself — preserving wake-mode filtering for
-            // messages that arrive synchronously after start().
-            if (!this.configLoaded) {
-                this.configLoaded = true;
-                await this.loadPersistedConfig();
-                if (!this.running) break;
-            }
 
             // Stimuli may be empty on a pure heartbeat tick — agent sees the empty list.
             const stimuli = this.queue.splice(0);
@@ -244,14 +242,15 @@ export class AgentParticipant implements Participant {
     /**
      * Returns a promise that resolves when the agent should next think.
      *
-     * - If the queue is already non-empty (e.g. messages arrived before start(),
-     *   or during a previous process() call), resolves immediately so they are
-     *   drained without any sleeping — this also avoids the wakeResolve race.
-     * - Otherwise blocks until wake() is called (by receive()) or the heartbeat
-     *   timer fires.
+     * - If a wake was requested while not sleeping, resolves immediately.
+     * - Otherwise blocks until wake() is called (by receive()/observe()) or the
+     *   heartbeat timer fires.
      */
     private waitForWake(): Promise<void> {
-        if (this.queue.length > 0) return Promise.resolve();
+        if (this.wakeRequested) {
+            this.wakeRequested = false;
+            return Promise.resolve();
+        }
         return new Promise<void>(resolve => {
             this.wakeResolve = resolve;
             if (this.heartbeatMs !== null) {
@@ -268,6 +267,7 @@ export class AgentParticipant implements Participant {
     private wake(): void {
         if (this.wakeResolve) {
             this.clearHeartbeatTimer();
+            this.wakeRequested = false;
             this.wakeResolve();
             this.wakeResolve = null;
         }

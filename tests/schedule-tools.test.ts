@@ -10,8 +10,8 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { IScheduler, IStore } from 'gears';
-import { MemoryStore } from 'gears/testing';
+import type { IScheduler, IStore } from '@nucleic-se/gears';
+import { MemoryStore } from '@nucleic-se/gears/testing';
 import { Sandbox } from '../src/sandbox/Sandbox.js';
 import { ScheduleToolPack } from '../src/packs/ScheduleToolPack.js';
 

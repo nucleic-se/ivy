@@ -10,7 +10,7 @@ import { AgentParticipant } from '../src/AgentParticipant.js';
 import { RoomLog } from '../src/RoomLog.js';
 import { Room } from '../src/Room.js';
 import type { Agent, AgentAction, AgentContext, Message } from '../src/types.js';
-import { createTestDatabase, MemoryStore } from 'gears/testing';
+import { createTestDatabase, MemoryStore } from '@nucleic-se/gears/testing';
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -179,16 +179,18 @@ describe('LLMAgent', () => {
         expect(result).toEqual([]);
     });
 
-    it('throws when LLM emits calls with more than 5 entries', async () => {
+    it('throws when LLM emits calls with more than 10 entries', async () => {
         const llm = mockLLM({
             calls: [
                 { tool: 'a' }, { tool: 'b' }, { tool: 'c' },
                 { tool: 'd' }, { tool: 'e' }, { tool: 'f' },
+                { tool: 'g' }, { tool: 'h' }, { tool: 'i' },
+                { tool: 'j' }, { tool: 'k' },
             ],
         });
         const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
 
-        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 5 entries per tick');
+        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 10 entries per tick');
     });
 
     it('throws when LLM emits calls as non-array', async () => {
@@ -225,6 +227,22 @@ describe('LLMAgent', () => {
 
         const result = await agent.think(baseContext());
         expect(result).toEqual([{ type: 'configure', publicContextWindow: 10, privateContextWindow: 5, internalContextWindow: 8 }]);
+    });
+
+    it('keeps heartbeat sticky when configure includes mixed heartbeatMs:null', async () => {
+        const llm = mockLLM({ configure: { wakeOn: 'mentions', heartbeatMs: null } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toEqual([{ type: 'configure', wakeOn: 'mentions' }]);
+    });
+
+    it('allows explicit heartbeat disable when configure only sets heartbeatMs:null', async () => {
+        const llm = mockLLM({ configure: { heartbeatMs: null } });
+        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
+
+        const result = await agent.think(baseContext());
+        expect(result).toEqual([{ type: 'configure', heartbeatMs: null }]);
     });
 
     it('rejects configure.publicContextWindow below minimum', async () => {
@@ -693,6 +711,28 @@ describe('AgentParticipant — config persistence', () => {
         const ctx = (agent.think as ReturnType<typeof vi.fn>).mock.calls[0][0] as AgentContext;
         expect(ctx.heartbeatMs).toBe(42000);
         expect(ctx.wakeMode).toBe('mentions');
+    });
+
+    it('restored heartbeat starts ticking without an incoming message', async () => {
+        vi.useFakeTimers();
+        try {
+            const store = new MemoryStore();
+            await store.set('ivy:agent:@ivy:config', { heartbeatMs: 10 });
+
+            const agent: Agent = { handle: '@ivy', displayName: 'Ivy', think: vi.fn().mockResolvedValue([]) };
+            const participant = new AgentParticipant(agent, room, { store });
+            room.join(participant);
+            room.join({ handle: '@nova', displayName: 'Nova', receive: vi.fn() });
+
+            participant.start();
+            vi.advanceTimersByTime(11);
+            await vi.runOnlyPendingTimersAsync();
+
+            expect(agent.think).toHaveBeenCalled();
+            participant.stop();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('persists config to store after a configure action', async () => {

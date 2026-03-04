@@ -17,7 +17,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { IFetcher } from 'gears';
+import type { IFetcher } from '@nucleic-se/gears';
 import type { Sandbox } from '../sandbox/Sandbox.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
 import { ToolGroupPack } from '../sandbox/ToolGroupPack.js';

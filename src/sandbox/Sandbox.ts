@@ -37,7 +37,7 @@
 
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
-import { getDataDir } from 'gears';
+import { getDataDir } from '@nucleic-se/gears';
 import type { FsAction, FsOp } from '../types.js';
 import type { ToolManifest } from './types.js';
 import type { SandboxLayer } from './layer.js';

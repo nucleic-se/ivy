@@ -1,27 +1,45 @@
 {
-  "name": "ivy",
+  "name": "@nucleic-se/ivy",
   "version": "0.1.0",
   "description": "Ivy bundle for gears.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
     "dev": "tsc -w",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20.18.1"
   },
+  "peerDependencies": {
+    "@nucleic-se/gears": "^0.1.0"
+  },
   "dependencies": {
-    "@types/diff": "^7.0.2",
     "defuddle": "^0.7.0",
     "diff": "^8.0.3"
   },
   "devDependencies": {
-    "gears": "file:../../gears",
+    "@types/diff": "^7.0.2",
+    "@types/node": "^24.3.0",
+    "@nucleic-se/gears": "^0.1.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }

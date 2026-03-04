@@ -21,7 +21,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import type { IFetcher, FetchResponse } from 'gears';
+import type { IFetcher, FetchResponse } from '@nucleic-se/gears';
 import { Sandbox } from '../src/sandbox/Sandbox.js';
 import { FetchToolPack } from '../src/packs/FetchToolPack.js';
 import { TextToolPack } from '../src/packs/TextToolPack.js';

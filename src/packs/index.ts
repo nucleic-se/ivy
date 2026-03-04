@@ -1,4 +1,4 @@
-import type { IPromptContributorRegistry } from 'gears/agentic';
+import type { IPromptContributorRegistry } from '@nucleic-se/gears/agentic';
 import { CorePromptPack } from './core-prompt.js';
 import type { IvyAgentPack, IvyPromptContext } from './types.js';
 

@@ -1,4 +1,4 @@
-import { createTestDatabase } from 'gears/testing';
+import { createTestDatabase } from '@nucleic-se/gears/testing';
 
 /**
  * Returns a fresh better-sqlite3 in-memory database for use in ivy tests.

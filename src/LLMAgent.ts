@@ -6,11 +6,11 @@
  * think() invocation, and returns an action list.
  *
  * At most one speak, one dm, one note, and one configure per response.
- * Multiple tool calls are allowed via the `calls` array (max 5 per tick).
+ * Multiple tool calls are allowed via the `calls` array (max 10 per tick).
  */
 
-import type { ILLMProvider } from 'gears';
-import { AIPromptService, PromptContributorRegistry, PromptEngine } from 'gears/agentic';
+import type { ILLMProvider } from '@nucleic-se/gears';
+import { AIPromptService, PromptContributorRegistry, PromptEngine } from '@nucleic-se/gears/agentic';
 import type { Agent, AgentAction, AgentContext, CoordinateAction, FsOp, WakeMode } from './types.js';
 import type { IvyPromptContext } from './packs/types.js';
 import type { Sandbox } from './sandbox/Sandbox.js';
@@ -131,7 +131,7 @@ const RESPONSE_SCHEMA = {
                 required: ['tool'],
             },
             maxItems: 5,
-            description: 'Sandbox tool calls to execute this tick. Use multiple entries for atomic multi-step operations (e.g. write prose, update index, flip ledger in one shot). Maximum 5.',
+            description: 'Sandbox tool calls to execute this tick. Use multiple entries for atomic multi-step operations (e.g. write prose, update index, flip ledger in one shot). Maximum 10.',
         },
     },
     required: [],
@@ -192,8 +192,9 @@ export class LLMAgent implements Agent {
         if (result.note?.trim()) {
             actions.push({ type: 'note', text: result.note.trim() });
         }
-        if (result.configure !== undefined) {
-            actions.push({ type: 'configure', ...result.configure });
+        const configure = this.normalizeConfigure(result.configure);
+        if (configure !== undefined) {
+            actions.push({ type: 'configure', ...configure });
         }
         if (result.fs) {
             actions.push({ type: 'fs', op: result.fs.op as FsOp, path: result.fs.path, content: result.fs.content, dest: result.fs.dest, recursive: result.fs.recursive });
@@ -264,8 +265,8 @@ export class LLMAgent implements Agent {
         if (raw.calls !== undefined) {
             if (!Array.isArray(raw.calls))
                 throw new Error('LLM output calls must be an array');
-            if (raw.calls.length > 5)
-                throw new Error('LLM output calls must not exceed 5 entries per tick');
+            if (raw.calls.length > 10)
+                throw new Error('LLM output calls must not exceed 10 entries per tick');
             for (const [i, c] of (raw.calls as unknown[]).entries()) {
                 if (typeof c !== 'object' || c === null)
                     throw new Error(`LLM output calls[${i}] must be an object`);
@@ -274,5 +275,32 @@ export class LLMAgent implements Agent {
             }
         }
         return raw;
+    }
+
+    /**
+     * Keep heartbeat sticky unless the model explicitly disables it.
+     * Some providers may emit heartbeatMs:null alongside unrelated configure fields.
+     * Treat that mixed-null as "unchanged" so heartbeat keeps ticking.
+     */
+    private normalizeConfigure(configure: ThinkResult['configure']): ThinkResult['configure'] | undefined {
+        if (configure === undefined) return undefined;
+        const normalized: NonNullable<ThinkResult['configure']> = {};
+
+        if (configure.wakeOn !== undefined) normalized.wakeOn = configure.wakeOn;
+        if (configure.publicContextWindow !== undefined) normalized.publicContextWindow = configure.publicContextWindow;
+        if (configure.privateContextWindow !== undefined) normalized.privateContextWindow = configure.privateContextWindow;
+        if (configure.internalContextWindow !== undefined) normalized.internalContextWindow = configure.internalContextWindow;
+
+        if (configure.heartbeatMs !== undefined) {
+            const hasOtherFields = configure.wakeOn !== undefined
+                || configure.publicContextWindow !== undefined
+                || configure.privateContextWindow !== undefined
+                || configure.internalContextWindow !== undefined;
+            if (configure.heartbeatMs !== null || !hasOtherFields) {
+                normalized.heartbeatMs = configure.heartbeatMs;
+            }
+        }
+
+        return Object.keys(normalized).length > 0 ? normalized : undefined;
     }
 }

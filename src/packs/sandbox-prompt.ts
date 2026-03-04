@@ -1,6 +1,6 @@
 import * as fsSync from 'node:fs';
-import type { IPromptContributor, PromptSection } from 'gears/agentic';
-import { estimateTokens } from 'gears/agentic';
+import type { IPromptContributor, PromptSection } from '@nucleic-se/gears/agentic';
+import { estimateTokens } from '@nucleic-se/gears/agentic';
 import type { IvyAgentPack, IvyPromptContext } from './types.js';
 import type { Sandbox } from '../sandbox/Sandbox.js';
 
@@ -67,7 +67,7 @@ const SandboxCallContributor: IPromptContributor<IvyPromptContext> = {
         const text = [
             '## Tool invocation (calls action)',
             'Single call:  {"calls": [{"tool": "<group>/<name>", "args": {...}}]}',
-            'Batch (atomic): {"calls": [{"tool": "a"}, {"tool": "b"}, {"tool": "c"}]}  — max 5 per tick',
+            'Batch (atomic): {"calls": [{"tool": "a"}, {"tool": "b"}, {"tool": "c"}]}  — max 10 per tick',
             'Read a tool\'s manifest before calling: fs read /tools/<group>/<name>.json',
             'The manifest includes the qualified tool name and a copy-pasteable example.',
             'Results arrive as internal notes on your next wake. If one call fails the rest are skipped.',
@@ -183,7 +183,7 @@ export class SandboxAgentPack implements IvyAgentPack {
 
     constructor(private sandbox: Sandbox, private agentHandle: string) {}
 
-    register(ctx: { promptRegistry: import('gears/agentic').IPromptContributorRegistry<IvyPromptContext> }): void {
+    register(ctx: { promptRegistry: import('@nucleic-se/gears/agentic').IPromptContributorRegistry<IvyPromptContext> }): void {
         this.sandbox.ensureAgentHome(this.agentHandle);
         ctx.promptRegistry.register(SandboxIdentityContributor);
         ctx.promptRegistry.register(SandboxFsContributor);
@@ -201,7 +201,7 @@ function section(
     text: string,
     priority: number,
     sticky: boolean,
-    phase: import('gears/agentic').PromptSectionPhase,
+    phase: import('@nucleic-se/gears/agentic').PromptSectionPhase,
 ): PromptSection {
     return {
         id,

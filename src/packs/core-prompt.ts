@@ -1,5 +1,5 @@
-import type { IPromptContributor, PromptSection } from 'gears/agentic';
-import { estimateTokens } from 'gears/agentic';
+import type { IPromptContributor, PromptSection } from '@nucleic-se/gears/agentic';
+import { estimateTokens } from '@nucleic-se/gears/agentic';
 import type { IvyAgentPack, IvyPromptContext } from './types.js';
 
 const IdentityContributor: IPromptContributor<IvyPromptContext> = {
@@ -139,7 +139,7 @@ const DmHintContributor: IPromptContributor<IvyPromptContext> = {
 export class CorePromptPack implements IvyAgentPack {
     id = 'core-prompt';
 
-    register(ctx: { promptRegistry: import('gears/agentic').IPromptContributorRegistry<IvyPromptContext> }): void {
+    register(ctx: { promptRegistry: import('@nucleic-se/gears/agentic').IPromptContributorRegistry<IvyPromptContext> }): void {
         ctx.promptRegistry.register(IdentityContributor);
         ctx.promptRegistry.register(WakeContextContributor);
         ctx.promptRegistry.register(PublicHistoryContributor);
@@ -157,7 +157,7 @@ function section(
     text: string,
     priority: number,
     sticky: boolean,
-    phase: import('gears/agentic').PromptSectionPhase,
+    phase: import('@nucleic-se/gears/agentic').PromptSectionPhase,
 ): PromptSection {
     return {
         id,

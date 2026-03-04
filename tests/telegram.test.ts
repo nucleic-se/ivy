@@ -2,7 +2,7 @@
  * Tests for TelegramParticipant — Telegram bridge.
  * - Outbound: receive() forwards room messages to notification:send
  * - Inbound: notification:receive events are posted to the room
- * - Slash commands: /pm, /who, unknown
+ * - Slash commands: /dm, /who, unknown
  * - Lifecycle: start/stop idempotency
  */
 
@@ -145,14 +145,14 @@ describe('TelegramParticipant slash commands', () => {
         expect(payload.message).toContain('@nova');
     });
 
-    it('/pm sends a DM to a known participant', () => {
+    it('/dm sends a DM to a known participant', () => {
         const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
         room.join(nova);
 
         events.trigger('notification:receive', {
             kind: 'command',
-            key: 'pm',
-            text: '/pm @nova hey there',
+            key: 'dm',
+            text: '/dm @nova hey there',
         });
 
         expect(nova.receive).toHaveBeenCalledOnce();
@@ -162,15 +162,15 @@ describe('TelegramParticipant slash commands', () => {
         expect(dm.text).toBe('hey there');
     });
 
-    it('/pm shows usage when format is wrong', () => {
+    it('/dm shows usage when format is wrong', () => {
         events.trigger('notification:receive', {
             kind: 'command',
-            key: 'pm',
-            text: '/pm no-handle-here',
+            key: 'dm',
+            text: '/dm no-handle-here',
         });
 
         const [, payload] = events.emit.mock.calls[0];
-        expect(payload.message).toContain('/pm @handle');
+        expect(payload.message).toContain('/dm @handle');
     });
 
     it('unknown command sends an error message to Telegram', () => {
@@ -184,7 +184,7 @@ describe('TelegramParticipant slash commands', () => {
         expect(payload.message).toContain('/foo');
         expect(payload.message).toContain('not recognized');
         // Available commands are listed dynamically
-        expect(payload.message).toContain('/pm');
+        expect(payload.message).toContain('/dm');
         expect(payload.message).toContain('/mute');
         expect(payload.message).toContain('/filters');
     });
@@ -358,6 +358,146 @@ describe('TelegramParticipant filter commands', () => {
         const [, payload] = events.emit.mock.calls[0];
         expect(payload.message).toContain('Focus mode: OFF');
         expect(payload.message).toContain('Muted: none');
+    });
+});
+
+// ─── /help ───────────────────────────────────────────────────────
+
+describe('TelegramParticipant /help', () => {
+    it('lists all commands with descriptions', () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const participant = new TelegramParticipant(
+            { handle: '@architect', displayName: 'Architect' },
+            room, events as any,
+        );
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'help', text: '/help' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('/dm');
+        expect(payload.message).toContain('/who');
+        expect(payload.message).toContain('/mute');
+        expect(payload.message).toContain('/wiretap');
+        expect(payload.message).toContain('/help');
+    });
+});
+
+// ─── /wiretap ────────────────────────────────────────────────────
+
+describe('TelegramParticipant /wiretap', () => {
+    let room: Room;
+    let events: ReturnType<typeof makeEventBus>;
+    let participant: TelegramParticipant;
+
+    beforeEach(() => {
+        room = makeRoom();
+        events = makeEventBus();
+        participant = new TelegramParticipant(
+            { handle: '@architect', displayName: 'Architect' },
+            room, events as any,
+        );
+        room.join(participant);
+        participant.start();
+    });
+
+    it('sends ON confirmation when activated', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('ON');
+    });
+
+    it('sends OFF confirmation when deactivated', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        events.emit.mockClear();
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('OFF');
+    });
+
+    it('delivers agent-to-agent DMs via wiretap', () => {
+        const ivy  = { handle: '@ivy',  displayName: 'Ivy',  receive: vi.fn() };
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(ivy);
+        room.join(nova);
+
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        events.emit.mockClear();
+
+        room.dm('@ivy', '@nova', 'secret handoff');
+
+        expect(events.emit).toHaveBeenCalledOnce();
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.title).toContain('@ivy');
+        expect(payload.title).toContain('@nova');
+        expect(payload.title).toContain('[DM]');
+        expect(payload.message).toBe('secret handoff');
+    });
+
+    it('suppresses self-notes in wiretap mode', () => {
+        const ivy = { handle: '@ivy', displayName: 'Ivy', receive: vi.fn() };
+        room.join(ivy);
+
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        events.emit.mockClear();
+
+        room.note('@ivy', 'internal scratch');
+
+        expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('formats DMs to self as "sender → you" in wiretap mode', () => {
+        const ivy = { handle: '@ivy', displayName: 'Ivy', receive: vi.fn() };
+        room.join(ivy);
+
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        events.emit.mockClear();
+
+        room.dm('@ivy', '@architect', 'report for you');
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.title).toBe('@ivy → you');
+    });
+
+    it('does not echo own messages in wiretap mode', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        events.emit.mockClear();
+
+        room.post('@architect', 'my own message');
+
+        expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('does not duplicate messages from others in wiretap mode', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        events.emit.mockClear();
+
+        const ivy = { handle: '@ivy', displayName: 'Ivy', receive: vi.fn() };
+        room.join(ivy);
+
+        room.post('@ivy', 'hello everyone');
+
+        // wiretap subscriber fires; receive() bails early — exactly one delivery
+        expect(events.emit).toHaveBeenCalledOnce();
+    });
+
+    it('stops wiretap subscription when stop() is called', () => {
+        const ivy  = { handle: '@ivy',  displayName: 'Ivy',  receive: vi.fn() };
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(ivy);
+        room.join(nova);
+
+        events.trigger('notification:receive', { kind: 'command', key: 'wiretap', text: '/wiretap' });
+        participant.stop();
+        events.emit.mockClear();
+
+        room.dm('@ivy', '@nova', 'should not arrive');
+
+        expect(events.emit).not.toHaveBeenCalled();
     });
 });
 

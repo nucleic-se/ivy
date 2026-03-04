@@ -23,7 +23,7 @@
  *   IStore absent     → reminders are ephemeral (lost on restart); still functional in-process.
  */
 
-import type { IScheduler, IStore } from 'gears';
+import type { IScheduler, IStore } from '@nucleic-se/gears';
 import type { SandboxLayer } from '../sandbox/layer.js';
 import { ToolGroupPack } from '../sandbox/ToolGroupPack.js';
 import type { Tool } from '../sandbox/ToolGroupPack.js';

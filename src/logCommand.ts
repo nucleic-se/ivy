@@ -10,7 +10,7 @@
  * Safe to run while the worker is live — uses a separate SQLite connection.
  */
 
-import type { CommandDefinition } from 'gears';
+import type { CommandDefinition } from '@nucleic-se/gears';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -68,6 +68,10 @@ export const logCommand: CommandDefinition = {
     ],
 
     action: async (args, app, output) => {
+        const io = output ?? {
+            log: (message: string) => console.log(message),
+            error: (message: string) => console.error(message),
+        };
         // ── Database access ───────────────────────────────────────
         const shared = app.make('SharedDatabase') as { db: any };
         const db = shared.db;
@@ -77,7 +81,7 @@ export const logCommand: CommandDefinition = {
         ).get();
 
         if (!tableExists) {
-            output.log('No ivy_messages table found — the room has not been used yet.');
+            io.log('No ivy_messages table found — the room has not been used yet.');
             return;
         }
 
@@ -88,7 +92,7 @@ export const logCommand: CommandDefinition = {
         if (sinceArg) {
             const sinceMs = new Date(sinceArg).getTime();
             if (isNaN(sinceMs)) {
-                output.error(`Invalid --since date: "${sinceArg}". Use YYYY-MM-DD.`);
+                io.error(`Invalid --since date: "${sinceArg}". Use YYYY-MM-DD.`);
                 return;
             }
             where = 'WHERE timestamp >= ?';
@@ -105,7 +109,7 @@ export const logCommand: CommandDefinition = {
 
         const total = rows.length;
         if (total === 0) {
-            output.log('No messages found' + (sinceArg ? ` since ${sinceArg}` : '') + '.');
+            io.log('No messages found' + (sinceArg ? ` since ${sinceArg}` : '') + '.');
             return;
         }
 
@@ -120,26 +124,26 @@ export const logCommand: CommandDefinition = {
             `── ${title} ${'─'.repeat(Math.max(0, 62 - title.length - 3))}`;
 
         // ── Header ────────────────────────────────────────────────
-        output.log('');
-        output.log(SEP);
-        output.log(` IVY MESSAGE LOG  ${total.toLocaleString()} messages${sinceNote}`);
-        output.log(` Span: ${span}`);
-        output.log(SEP);
+        io.log('');
+        io.log(SEP);
+        io.log(` IVY MESSAGE LOG  ${total.toLocaleString()} messages${sinceNote}`);
+        io.log(` Span: ${span}`);
+        io.log(SEP);
 
         // ── Volume by type ────────────────────────────────────────
         const pub  = rows.filter(r => r.to === '*');
         const priv = rows.filter(r => r.to !== '*' && r.to !== r.from);
         const self = rows.filter(r => r.to === r.from);
 
-        output.log('');
-        output.log(sec('VOLUME BY TYPE'));
+        io.log('');
+        io.log(sec('VOLUME BY TYPE'));
         const typeRows: [string, number][] = [
             ['Public (broadcast)', pub.length],
             ['Private (DM)',       priv.length],
             ['Internal (notes)',   self.length],
         ];
         for (const [label, n] of typeRows) {
-            output.log(
+            io.log(
                 `  ${label.padEnd(22)} ${bar(n / total)}  ${String(n).padStart(5)}  ${pct(n, total)}`
             );
         }
@@ -149,10 +153,10 @@ export const logCommand: CommandDefinition = {
         for (const r of rows) bySender.set(r.from, (bySender.get(r.from) ?? 0) + 1);
         const senders = [...bySender.entries()].sort((a, b) => b[1] - a[1]);
 
-        output.log('');
-        output.log(sec('MESSAGES BY SENDER'));
+        io.log('');
+        io.log(sec('MESSAGES BY SENDER'));
         for (const [sender, n] of senders) {
-            output.log(
+            io.log(
                 `  ${handle(sender).padEnd(18)} ${bar(n / total)}  ${String(n).padStart(5)}  ${pct(n, total)}`
             );
         }
@@ -163,10 +167,10 @@ export const logCommand: CommandDefinition = {
         const callCount   = rows.filter(r => toolCallRe.test(r.text)).length;
         const resultCount = rows.filter(r => toolResultRe.test(r.text)).length;
         if (callCount > 0 || resultCount > 0) {
-            output.log('');
-            output.log(sec('TOOL ACTIVITY'));
-            output.log(`  Tool calls   ${String(callCount).padStart(6)}`);
-            output.log(`  Tool results ${String(resultCount).padStart(6)}`);
+            io.log('');
+            io.log(sec('TOOL ACTIVITY'));
+            io.log(`  Tool calls   ${String(callCount).padStart(6)}`);
+            io.log(`  Tool results ${String(resultCount).padStart(6)}`);
         }
 
         // ── Private DM pairs ──────────────────────────────────────
@@ -178,11 +182,11 @@ export const logCommand: CommandDefinition = {
         const pairs = [...dmPairs.entries()].sort((a, b) => b[1] - a[1]);
 
         if (pairs.length > 0) {
-            output.log('');
-            output.log(sec('PRIVATE DM PAIRS'));
+            io.log('');
+            io.log(sec('PRIVATE DM PAIRS'));
             for (const [pair, n] of pairs) {
                 const label = pair.split(' ↔ ').map(handle).join(' ↔ ');
-                output.log(`  ${label.padEnd(36)} ${String(n).padStart(5)} msgs`);
+                io.log(`  ${label.padEnd(36)} ${String(n).padStart(5)} msgs`);
             }
         }
 
@@ -197,10 +201,10 @@ export const logCommand: CommandDefinition = {
         const maxDay = Math.max(...recentDays.map(d => d[1]), 1);
         const suffix = days.length > 14 ? ` — last 14 of ${days.length} active days` : '';
 
-        output.log('');
-        output.log(sec(`DAILY ACTIVITY${suffix}`));
+        io.log('');
+        io.log(sec(`DAILY ACTIVITY${suffix}`));
         for (const [day, n] of recentDays) {
-            output.log(`  ${day}  ${bar(n / maxDay, 28)}  ${String(n).padStart(4)}`);
+            io.log(`  ${day}  ${bar(n / maxDay, 28)}  ${String(n).padStart(4)}`);
         }
 
         // ── Hourly heatmap (all data) ─────────────────────────────
@@ -208,8 +212,8 @@ export const logCommand: CommandDefinition = {
         for (const r of rows) byHour[new Date(r.timestamp).getUTCHours()]! += 1;
         const maxHour = Math.max(...byHour, 1);
 
-        output.log('');
-        output.log(sec('HOURLY HEATMAP (UTC)'));
+        io.log('');
+        io.log(sec('HOURLY HEATMAP (UTC)'));
         // Two rows: 00-11, 12-23
         for (let startH = 0; startH < 24; startH += 12) {
             const labels = Array.from({ length: 12 }, (_, i) => String(startH + i).padStart(2, '0'));
@@ -221,8 +225,8 @@ export const logCommand: CommandDefinition = {
                 if (frac < 0.75) return '▆';
                 return '█';
             });
-            output.log(`  ${labels.join('  ')} h`);
-            output.log(`  ${blocks.join('  ')} `);
+            io.log(`  ${labels.join('  ')} h`);
+            io.log(`  ${blocks.join('  ')} `);
         }
 
         // ── Timeline ──────────────────────────────────────────────
@@ -232,10 +236,10 @@ export const logCommand: CommandDefinition = {
         const slice  = source.slice(-tailN);
         const tlLabel = showDm ? 'RECENT PRIVATE DMs' : 'RECENT PUBLIC MESSAGES';
 
-        output.log('');
-        output.log(sec(`${tlLabel} — last ${slice.length}`));
+        io.log('');
+        io.log(sec(`${tlLabel} — last ${slice.length}`));
         if (slice.length === 0) {
-            output.log('  (none)');
+            io.log('  (none)');
         } else {
             for (const r of slice) {
                 const ts      = `${isoDate(r.timestamp)} ${isoTime(r.timestamp)}`;
@@ -244,12 +248,12 @@ export const logCommand: CommandDefinition = {
                     : handle(r.from);
                 const preview = r.text.replace(/\s+/g, ' ').trim().slice(0, 100);
                 const ellip   = r.text.length > 100 ? '…' : '';
-                output.log(`  [${ts}] ${who.padEnd(showDm ? 28 : 14)}  ${preview}${ellip}`);
+                io.log(`  [${ts}] ${who.padEnd(showDm ? 28 : 14)}  ${preview}${ellip}`);
             }
         }
 
-        output.log('');
-        output.log(SEP);
-        output.log('');
+        io.log('');
+        io.log(SEP);
+        io.log('');
     },
 };

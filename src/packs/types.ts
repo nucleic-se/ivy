@@ -1,4 +1,4 @@
-import type { IPromptContributorRegistry } from 'gears/agentic';
+import type { IPromptContributorRegistry } from '@nucleic-se/gears/agentic';
 import type { AgentContext, SpeakAction, DmAction, CoordinateAction } from '../types.js';
 import type { Room } from '../Room.js';
 

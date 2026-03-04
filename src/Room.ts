@@ -5,15 +5,25 @@
  * to participants filtered by visibility (broadcast vs private).
  */
 
-import type { ILogger } from 'gears';
+import type { ILogger } from '@nucleic-se/gears';
 import type { Message, Participant } from './types.js';
 import { isVisibleTo } from './types.js';
 import type { RoomLog } from './RoomLog.js';
 
 export class Room {
     private participants: Map<string, Participant> = new Map();
+    private allSubscribers: Set<(msg: Message) => void> = new Set();
 
     constructor(private log: RoomLog, private logger?: ILogger) {}
+
+    /**
+     * Subscribe to every message posted to the room, regardless of visibility.
+     * Used by privileged observers (e.g. wiretap mode). Returns an unsubscribe fn.
+     */
+    subscribeAll(fn: (msg: Message) => void): () => void {
+        this.allSubscribers.add(fn);
+        return () => this.allSubscribers.delete(fn);
+    }
 
     /** Register a participant. */
     join(participant: Participant): void {
@@ -78,6 +88,11 @@ export class Room {
                     this.logger?.error(`Failed to deliver message to ${handle}`, { error: (err as Error).message });
                 }
             }
+        }
+
+        // Notify privileged all-subscribers (e.g. wiretap).
+        for (const fn of this.allSubscribers) {
+            try { fn(msg); } catch { /* never let a subscriber break delivery */ }
         }
 
         return msg;

@@ -1,8 +1,8 @@
-import { ServiceProvider } from 'gears';
+import { ServiceProvider } from '@nucleic-se/gears';
 import { Room } from './Room.js';
 import { RoomLog } from './RoomLog.js';
 
-declare module 'gears' {
+declare module '@nucleic-se/gears' {
     interface ServiceMap {
         'ivy.RoomLog': RoomLog;
         'ivy.Room': Room;

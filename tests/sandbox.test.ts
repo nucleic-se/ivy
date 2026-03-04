@@ -13,7 +13,7 @@ import { AgentParticipant } from '../src/AgentParticipant.js';
 import { RoomLog } from '../src/RoomLog.js';
 import { Room } from '../src/Room.js';
 import type { Agent, AgentAction, AgentContext } from '../src/types.js';
-import { createTestDatabase } from 'gears/testing';
+import { createTestDatabase } from '@nucleic-se/gears/testing';
 
 // ─── Helpers ────────────────────────────────────────────────────
 

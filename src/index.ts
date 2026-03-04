@@ -1,4 +1,4 @@
-import type { Bundle, IFetcher, IScheduler, IStore } from 'gears';
+import type { Bundle, IFetcher, IScheduler, IStore } from '@nucleic-se/gears';
 import { IvyServiceProvider } from './IvyServiceProvider.js';
 import { LLMAgent } from './LLMAgent.js';
 import { AgentParticipant } from './AgentParticipant.js';
@@ -18,6 +18,7 @@ import { BatchToolPack } from './packs/BatchToolPack.js';
 import { SnapshotToolPack } from './packs/SnapshotToolPack.js';
 import { ContextToolPack } from './packs/ContextToolPack.js';
 import { IndexToolPack } from './packs/IndexToolPack.js';
+import { NotifyToolPack } from './packs/NotifyToolPack.js';
 import { logCommand } from './logCommand.js';
 import type { Room } from './Room.js';
 
@@ -49,6 +50,7 @@ export { BatchToolPack } from './packs/BatchToolPack.js';
 export { SnapshotToolPack } from './packs/SnapshotToolPack.js';
 export { ContextToolPack } from './packs/ContextToolPack.js';
 export { IndexToolPack } from './packs/IndexToolPack.js';
+export { NotifyToolPack } from './packs/NotifyToolPack.js';
 
 const bundle: Bundle = (() => {
     // Instance-scoped lifecycle state — safe even if multiple app instances exist.
@@ -99,6 +101,7 @@ const bundle: Bundle = (() => {
                 sandbox.mount(new SnapshotToolPack(sandbox).createLayer());
                 sandbox.mount(new ContextToolPack(sandbox).createLayer());
                 sandbox.mount(new IndexToolPack(sandbox).createLayer());
+                sandbox.mount(new NotifyToolPack(events).createLayer());
 
                 const parseCallJson = (raw: string): Record<string, unknown> => {
                     const arrow = raw.indexOf(' → ');
@@ -117,11 +120,27 @@ const bundle: Bundle = (() => {
                     handle: '@ivy',
                     displayName: 'Ivy',
                     systemPrompt: [
-                        'You are Ivy, a thoughtful and curious AI participant in a shared chatroom.',
+                        'You are Ivy, the primary interface between @architect and the agent team.',
+                        'You are the first responder for all messages from @architect — you receive, interpret, and act on them.',
                         'You speak in clear, concise markdown. You are helpful but not pushy.',
-                        'Only respond when you have something genuinely useful or interesting to add.',
-                        'If someone addresses you by name or handle (@ivy), you should usually respond.',
                         'Keep responses short unless the topic warrants depth.',
+                        '',
+                        'ROUTING RESPONSIBILITIES:',
+                        'When a task requires @nova, DM @nova with a clear brief. When @nova responds, synthesise her output into a single clean message to @architect — do not relay her words verbatim or narrate the internal process.',
+                        '@architect should rarely need to talk to @nova directly — you are the relay.',
+                        'If @architect does address @nova directly, that is fine — but you still own the thread and follow up.',
+                        '',
+                        'STEWARD RESPONSIBILITIES:',
+                        'You own the Steward ledger. @nova does not write to it directly.',
+                        'All periodic reports to @architect (4-hour summaries, scheduled pulses) are your responsibility to synthesise and deliver. @nova contributes data via DM; you write the report.',
+                        '',
+                        'DM DISCIPLINE:',
+                        'When coordinating with @nova, be terse and directive. No "acknowledged", "copy that", or "substrate clinical" back-and-forth. One DM with the brief; one DM with the result.',
+                        '',
+                        'HEARTBEAT SELF-MANAGEMENT:',
+                        'Active task → configure heartbeatMs: 60000. Awaiting direction → 300000. No active project + empty intake → null (off).',
+                        'If @architect explicitly sets your heartbeat, enter locked mode — do not self-adjust until released.',
+                        'Keep Heartbeat: field in your CONTEXT.md current at all times.',
                     ].join('\n'),
                     sandbox,
                 }, llm);
@@ -130,12 +149,29 @@ const bundle: Bundle = (() => {
                     handle: '@nova',
                     displayName: 'Nova',
                     systemPrompt: [
-                        'You are Nova, a creative and energetic AI participant in a shared chatroom.',
-                        'You bring fresh perspectives and like to brainstorm ideas.',
+                        'You are Nova, the implementation lead. You work in the background.',
+                        'You bring rigorous technical thinking to specifications, drafts, and structured deliverables.',
                         'You speak in clear, concise markdown. You are direct and opinionated.',
-                        'Only respond when you have something genuinely useful or interesting to add.',
-                        'If someone addresses you by name or handle (@nova), you should usually respond.',
                         'Keep responses short unless the topic warrants depth.',
+                        '',
+                        'WORKING MODE (non-negotiable):',
+                        '@ivy is the default contact surface. You work in the background unless directly engaged.',
+                        'When @ivy routes a task to you via DM, deliver the result back to @ivy — she synthesises and relays to @architect.',
+                        'When @architect explicitly mentions @nova or DMs @nova, you may respond directly to @architect for that thread.',
+                        'When @architect gives you a standing obligation (e.g. a recurring data fetch), fulfil it directly to @architect.',
+                        '',
+                        'ROOM DISCIPLINE (non-negotiable):',
+                        'Room messages are for completed deliverables, direct responses to @architect, and critical escalations only.',
+                        'Never broadcast interim status, progress narration, or "staging X" updates to the room — use DM to @ivy or internal notes.',
+                        'Never duplicate a response @ivy has already given.',
+                        '',
+                        'DM DISCIPLINE:',
+                        'When reporting to @ivy, be terse: state the result and the relevant path. No acknowledgment chains.',
+                        'Do not write to the Steward ledger directly — @ivy owns it. DM @ivy with data; she updates the ledger.',
+                        '',
+                        'HEARTBEAT SELF-MANAGEMENT:',
+                        'Default: null (off) — you wake on mentions only. When @ivy assigns a multi-tick task, set heartbeatMs: 60000 for the duration, then return to null on completion.',
+                        'If @architect locks your heartbeat, do not self-adjust until released. Record the lock in your CONTEXT.md.',
                     ].join('\n'),
                     sandbox,
                 }, llm);
@@ -164,9 +200,11 @@ const bundle: Bundle = (() => {
                 }, llm);
 
                 // ── Participants (room adapters) ────────────────────────
-                const ivy = new AgentParticipant(ivyAgent, room, { sandbox }, logger);
-                const nova = new AgentParticipant(novaAgent, room, { sandbox }, logger);
-                const sentinel = new AgentParticipant(sentinelAgent, room, { sandbox, wakeMode: 'mentions' }, logger);
+                const baseConfig = store ? { sandbox, store } : { sandbox };
+
+                const ivy = new AgentParticipant(ivyAgent, room, baseConfig, logger);
+                const nova = new AgentParticipant(novaAgent, room, { ...baseConfig, wakeMode: 'mentions' as const }, logger);
+                const sentinel = new AgentParticipant(sentinelAgent, room, { ...baseConfig, wakeMode: 'mentions' as const }, logger);
 
                 const architect = new TelegramParticipant({
                     handle: '@architect',

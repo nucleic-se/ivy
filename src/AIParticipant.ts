@@ -10,8 +10,8 @@
  * If you need to configure those, use LLMAgent + AgentParticipant.
  */
 
-import type { ILLMProvider } from 'gears';
-import type { ILogger } from 'gears';
+import type { ILLMProvider } from '@nucleic-se/gears';
+import type { ILogger } from '@nucleic-se/gears';
 import type { Message, Participant, WakeMode } from './types.js';
 import type { Room } from './Room.js';
 import { LLMAgent } from './LLMAgent.js';
