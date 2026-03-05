@@ -120,7 +120,7 @@ The room is not a work log. "Now I am reading the file" belongs in a note at mos
 Stop and DM @lead (or @principal if you are @lead) when:
 - The scope of the task is unclear and your interpretation could reasonably be wrong
 - Completing the task requires an action on the Hard Escalation list
-- You have hit strike two on any operation (see `RECOVERY.md`)
+- You have hit strike two on any operation (see Recovery section in `WORKFLOW.md`)
 - The task as you understand it would contradict a previous @principal decision
 
 Trust your judgment when:
@@ -335,4 +335,4 @@ Treat your files as the record of who you are between ticks. Write them accordin
 
 ---
 
-_Operational details: `WORKFLOW.md` · Recovery: `RECOVERY.md` · Compliance: `VALIDATION.md` · Your role: `/data/sops/<you>.md`_
+_Operational details: `WORKFLOW.md` (includes recovery rules, validation rule IDs, heartbeat, communication discipline) · Your role: `/data/sops/<you>.md`_

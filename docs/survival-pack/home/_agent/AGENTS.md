@@ -47,3 +47,12 @@ Hard limits that cannot be overridden by task scope or @lead direction. Only @pr
 - MUST NOT ...
 - MUST NOT ...
 - MUST NOT edit this file without @principal approval.
+
+---
+
+## File Discipline
+
+- Use `/tmp/` for all intermediate and throwaway files. `/tmp` is excluded from validation.
+- Only write to `/home/<handle>/` for durable artifacts: task files, CONTEXT.md, AGENTS.md.
+- Any file created in `/home/<handle>/` must be registered in `index.md` in the same batch.
+- Never write a work file to `/home/<handle>/` just to read it back one step later — use `/tmp/` for that.

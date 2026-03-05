@@ -1,26 +1,23 @@
-# Task: <title>
+# Script: <title>
 
-Project: <project-name>
 Owner: @<agent>
-Status: active
+Goal: <one sentence — what does done look like?>
 Created: YYYY-MM-DD
-Last checkpoint: YYYY-MM-DD HH:MM UTC
-
-## Goal
-One sentence. What does done look like?
+Status: active
 
 ## Acceptance Criteria
-- [ ] verifiable criterion
-- [ ] verifiable criterion
+- [ ] <verifiable criterion>
+- [ ] <verifiable criterion>
 
 ## Steps
-- [ ] Step 1: <description>
-- [ ] Step 2: <description>
-- [ ] Step 3: <description>
+- [/] S1: <step title>
+- [ ] S2: <step title>
+- [ ] S3: <step title>
 
-## Notes
-Decisions made. Edge cases found. Things to watch.
+## State
+Current: S1
+Attempts: 0
+Scratchpad:
 
----
-_Mark current step `[/]`. Mark completed steps `[x]`. Update checkpoint after every step._
-_Archive or delete on completion — do not leave finished task files in `tasks/`._
+## Handoff Log
+

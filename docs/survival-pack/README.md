@@ -35,9 +35,7 @@ After copying, boot the app. On first tick @sentinel will run an integrity gate 
 │   ├── protocols/
 │   │   ├── index.md
 │   │   ├── AGENT_MANUAL.md           ← how to think and behave (cognitive guide)
-│   │   ├── WORKFLOW.md               ← how work is planned, executed, reviewed, closed
-│   │   ├── RECOVERY.md               ← errors, blockers, escalation chain
-│   │   ├── VALIDATION.md             ← compliance rules and validate/run usage
+│   │   ├── WORKFLOW.md               ← how work is planned, executed, reviewed, closed; includes recovery rules, validation rule IDs, heartbeat, and communication discipline
 │   │   └── PROPOSALS.md              ← change proposal lifecycle
 │   ├── sops/
 │   │   ├── index.md

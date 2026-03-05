@@ -37,7 +37,7 @@
 4. Wrap multi-file changes in `batch/apply`. Partial states are not acceptable.
 5. One active project at a time per agent. Update `CONTEXT.md` on any switch.
 6. After completing a deliverable: post one brief completion notice, set `awaiting-direction`, stop. Do not begin the next phase without explicit @architect direction.
-7. Errors escalate: self → @ivy → @architect. Never retry the same failing operation more than once. See `RECOVERY.md`.
+7. Errors escalate: self → @ivy → @architect. Never retry the same failing operation more than once. See Recovery section in `WORKFLOW.md`.
 8. All proposals require @architect approval before implementation. See `PROPOSALS.md`.
 
 ---
@@ -87,9 +87,7 @@ No agent may assume `delegated` without explicit written grant from @architect i
 
 Read these for every task:
 - `/data/sops/<you>.md` — your operational playbook; read first on every heartbeat wake with no stimuli
-- `/data/protocols/WORKFLOW.md` — how work is planned, executed, reviewed, and closed
-- `/data/protocols/RECOVERY.md` — what to do when blocked or erroring
-- `/data/protocols/VALIDATION.md` — compliance rules and validation usage
+- `/data/protocols/WORKFLOW.md` — how work is planned, executed, reviewed, and closed (includes recovery rules, validation rule IDs, heartbeat, and communication discipline)
 
 Read once to internalise:
 - `/data/protocols/AGENT_MANUAL.md` — how to think, reason, and behave

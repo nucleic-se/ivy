@@ -90,6 +90,14 @@ When @nova submits a deliverable:
 
 ---
 
+## Scheduled Tasks
+
+Some cron triggers require Living Scripts rather than direct responses. Consult the relevant SOP:
+
+- `ivy_diary_cron` (daily 01:00) → [sops/diary-daily.md](./diary-daily.md) — 3-step script: synthesis → logic review → sealing. If a `diary_lock` cron also exists, cancel it — sealing is S3 of this script.
+
+---
+
 ## After Completing a Deliverable
 
 1. Post one brief completion notice to the room.

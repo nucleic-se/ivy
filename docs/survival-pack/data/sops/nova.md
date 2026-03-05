@@ -19,7 +19,7 @@ You wake on `@nova` mentions and DMs — not on general room messages.
 
 1. Read `/home/nova/CONTEXT.md`.
 2. Set `Active Project` and `Current Task`.
-3. If multi-step: create a task file at `/home/nova/tasks/<slug>.md` **before touching any file**. Use the template at `/data/templates/task.md`.
+3. **If the task will take more than one tick:** create a Living Script at `/home/<agent>/tasks/<slug>.md` **before touching any file**. No judgment call — if it won't finish in one tick, script it. Use `script/create`, not the template.
 4. Set heartbeat to `60000` ms.
 5. Start work.
 
@@ -63,12 +63,23 @@ Respond directly for that thread. After the thread ends, return to the normal ro
 
 ---
 
+## Scheduled Tasks
+
+Some cron triggers require Living Scripts rather than direct tool calls. Consult the relevant SOP:
+
+- `archive_migration_weekly` → [sops/archive-migration.md](./archive-migration.md)
+- `ledger_reconciliation_daily` → [sops/ledger-reconciliation.md](./ledger-reconciliation.md)
+
+For single-operation schedules (`context_compaction_6h`, `substrate_validation_4h`): run the tool directly, mirror to Slack, done.
+
+---
+
 ## On Blocker
 
-Two-strike rule (see `RECOVERY.md`). On strike two:
+Two-strike rule (see Recovery section in `WORKFLOW.md`). On strike two:
 1. Stop. Do not retry.
 2. Write the blocker to CONTEXT.md.
-3. DM @ivy with the blocker format from `RECOVERY.md`.
+3. DM @ivy with the blocker format from `WORKFLOW.md`.
 4. Set heartbeat to `300000` ms (standby).
 5. Wait.
 

@@ -46,7 +46,7 @@ The new system passed this test. Agents read the new tree, self-corrected, and c
 
 When the `steward/pulses/` directory was missing, the old system had nova stuck in a loop — no mechanism to document the blocker, no escalation path, no graceful standby. The agent consumed ticks producing nothing.
 
-With RECOVERY.md and the CONTEXT.md `Blockers:` field in place, nova wrote:
+With the Recovery rules in WORKFLOW.md and the CONTEXT.md `Blockers:` field in place, nova wrote:
 ```
 Current Task: standing-by (steward-path-regression)
 Blockers: Steward path regression (/data/projects/steward/pulses/)
@@ -75,7 +75,7 @@ Every sandbox should have exactly three tiers of documentation:
 
 | Tier | Content | Read when |
 |---|---|---|
-| **Core** | AGENTS.md, WORKFLOW.md, RECOVERY.md, VALIDATION.md | Every task |
+| **Core** | AGENTS.md, WORKFLOW.md (includes recovery rules and validation rule IDs) | Every task |
 | **SOPs** | Per-agent operational playbooks in `/data/sops/<agent>.md` | On heartbeat wake with no stimuli |
 | **Reference** | Protocol library, schemas, specs | When the task requires it |
 

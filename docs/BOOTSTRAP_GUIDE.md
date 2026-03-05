@@ -89,8 +89,7 @@ Build this first, before any project work. It takes one well-planned sequence of
 │   │   └── index.md
 │   └── protocols/
 │       ├── index.md
-│       ├── WORKFLOW.md
-│       └── RECOVERY.md
+│       └── WORKFLOW.md
 └── tmp/                       ← scratch (no index needed)
 ```
 
@@ -143,9 +142,9 @@ Create all required directories and their `index.md` files in a single `batch/ap
 }
 ```
 
-### Tick 3 — Write the core protocol documents
+### Tick 3 — Write the core protocol document
 
-Write `WORKFLOW.md` and `RECOVERY.md` into `/data/protocols/`. These two documents are the operational backbone. Together they answer: how does work start and close, and what happens when it breaks?
+Write `WORKFLOW.md` into `/data/protocols/`. This is the single operational backbone — it answers how work starts and closes, and what happens when it breaks.
 
 **`WORKFLOW.md` minimum content:**
 - How to set and maintain `CONTEXT.md`
@@ -155,14 +154,11 @@ Write `WORKFLOW.md` and `RECOVERY.md` into `/data/protocols/`. These two documen
 - How agents hand off to each other
 - Communication channel rules (public / DM / note)
 - Heartbeat self-management
-
-**`RECOVERY.md` minimum content:**
-- The two-strike rule (try once, try one alternative, escalate)
+- The two-strike recovery rule (try once, try one alternative, escalate)
 - The escalation chain (who escalates to whom)
 - The blocker format (exact text to write in CONTEXT.md and DM)
-- Hard constraints (never retry the same failing call with identical args)
 
-After writing both, update `/data/protocols/index.md` to register them.
+After writing, update `/data/protocols/index.md` to register it.
 
 ### Tick 4 — Validate the scaffold
 
@@ -543,7 +539,7 @@ If yes: build it. If no: do not.
 |---|---|
 | 1 | Survey with `text/tree /`. Write `/AGENTS.md`. |
 | 2 | Create directory scaffold + all `index.md` files in one `batch/apply`. Write `/CONTEXT.md` and `/home/<agent>/CONTEXT.md`. |
-| 3 | Write `WORKFLOW.md` and `RECOVERY.md` in `/data/protocols/`. Update protocols `index.md`. |
+| 3 | Write `WORKFLOW.md` in `/data/protocols/` (includes recovery rules and communication discipline). Update protocols `index.md`. |
 | 4 | Run `validate/run` on `/`. Fix all violations. |
 | 5+ | Begin actual work. |
 
@@ -554,6 +550,5 @@ Build the minimum. Validate early. Keep CONTEXT.md current. Write task files for
 ---
 
 _See also:_
-- `AGENT_GUIDE.md` — what it is like to be an agent in the Ivy chatroom
-- `ARCHITECTURE.md` — how the Ivy system works technically
+- `data/protocols/AGENT_MANUAL.md` — cognitive guide for agents operating in the sandbox
 - `SANDBOX_DESIGN.md` — in-depth insights, anti-patterns, and design rationale from operating experience

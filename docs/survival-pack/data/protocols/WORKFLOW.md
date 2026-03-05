@@ -31,9 +31,11 @@ How work is planned, executed, reviewed, and closed. This is the single operatio
 
 ## Tracking Complex Work
 
-For any task spanning multiple ticks or involving 3+ sequential steps:
+**Rule: if a task will take more than one tick to complete, use a Living Script. No judgment call — just use it.**
 
-**Create a Living Script** at `/home/<agent>/tasks/<slug>.md` using `script/create`. This is your program counter — it survives context window flushes. The CONTEXT.md Mini Checklist is a summary; the task file is the detail.
+A Living Script is your Safety Soul: the artifact that survives a context flush and lets you reboot into a known state. Without it, a context reset means starting over. With it, you resume from the exact step you left.
+
+**Create a Living Script** at `/home/<agent>/tasks/<slug>.md` using `script/create`. Record the path in your CONTEXT.md Mini Checklist immediately — this is how you find it after a flush.
 
 ```json
 { "tool": "script/create", "args": {

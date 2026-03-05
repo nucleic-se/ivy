@@ -6,6 +6,7 @@ Permanent knowledge base. Findings, patterns, references, and insights worth kee
 
 ## Contents
 - `index.md`: This file.
+- [technical/](./technical/index.md): Technical references — Living Script syntax, tool patterns.
 
 ## Organisation
 
