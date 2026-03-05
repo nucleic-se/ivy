@@ -41,13 +41,31 @@ interface FileSnapshot {
 /**
  * Collect unique absolute agent paths from all op args (recursive).
  * Finds every string value that is an absolute path, regardless of key name.
+ *
+ * Directory paths are expanded to include their immediate-children files so
+ * that tools like index/refresh — which mutate files inside a directory arg
+ * rather than the directory itself — are covered by the snapshot.
  */
-function collectAgentPaths(ops: BatchOp[]): string[] {
+function collectAgentPaths(ops: BatchOp[], sandbox: Sandbox): string[] {
     const seen = new Set<string>();
+    function addPath(agentPath: string): void {
+        seen.add(agentPath);
+        // Expand directories: snapshot immediate children so file mutations
+        // inside a directory arg are captured and can be rolled back.
+        try {
+            const real = sandbox.resolveExisting(agentPath);
+            if (fs.statSync(real).isDirectory()) {
+                const base = agentPath.endsWith('/') ? agentPath : agentPath + '/';
+                for (const entry of fs.readdirSync(real, { withFileTypes: true })) {
+                    if (entry.isFile()) seen.add(base + entry.name);
+                }
+            }
+        } catch { /* path doesn't exist yet — that's fine, snapshot will note absence */ }
+    }
     function extract(value: unknown): void {
         if (typeof value === 'string') {
             const p = path.normalize(value);
-            if (path.isAbsolute(p)) seen.add(p);
+            if (path.isAbsolute(p)) addPath(p);
         } else if (Array.isArray(value)) {
             for (const item of value) extract(item);
         } else if (value !== null && typeof value === 'object') {
@@ -153,7 +171,7 @@ export class BatchToolPack {
                 }
 
                 // ── Snapshot ───────────────────────────────────────────
-                const agentPaths = collectAgentPaths(ops);
+                const agentPaths = collectAgentPaths(ops, sandbox);
                 const snapshots = agentPaths.map(p => snapshot(sandbox, p));
 
                 // ── Execute ops ────────────────────────────────────────

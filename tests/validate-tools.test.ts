@@ -241,6 +241,12 @@ describe('BROKEN_REF check', () => {
         const r = await run(sandbox, '/home', 'refs');
         expect(r.violations.filter(v => v.rule === 'BROKEN_REF')).toHaveLength(0);
     });
+
+    it('ignores data: URIs (inline base64 content from fetched pages)', async () => {
+        write(root, 'home/notes.md', '![](data:image/svg+xml;base64,PHN2Zy8+)\n');
+        const r = await run(sandbox, '/home', 'refs');
+        expect(r.violations.filter(v => v.rule === 'BROKEN_REF')).toHaveLength(0);
+    });
 });
 
 // ─── CONTEXT_SCHEMA ──────────────────────────────────────────────

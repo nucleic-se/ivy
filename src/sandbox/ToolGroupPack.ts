@@ -121,6 +121,7 @@ class ToolGroupLayer implements SandboxLayer {
                 if (missing.includes('path')) hints.push('"path": use text/tree or text/find to discover it first');
                 if (missing.includes('content')) hints.push('"content": read the file first with text/read, then supply the full text');
                 if (missing.includes('description')) hints.push('"description": provide a one-line summary of what the file contains or does');
+                if (missing.includes('summary')) hints.push('"summary": one or two sentences describing what was accomplished (e.g. "Parsed 7 records from btc_data.json, extracted price array")');
                 const hintStr = hints.length > 0 ? ` — hints: ${hints.join('; ')}` : '';
                 throw new Error(`missing required argument${missing.length > 1 ? 's' : ''}: ${missing.map(k => `"${k}"`).join(', ')}${hintStr}`);
             }

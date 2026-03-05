@@ -12,7 +12,6 @@ const IdentityContributor: IPromptContributor<IvyPromptContext> = {
             '',
             '## Self-check (read before every response)',
             `- Your handle is ${ctx.handle}. Every message in history tagged [${ctx.handle}] or [you] is something you already said.`,
-            '- Before speaking: read "## What you said recently". If you already addressed the current stimulus, return {} and stay silent.',
             '- Prefer substance over noise — use "note" for internal reasoning. Return {} only when you have nothing to add and were not addressed.',
         ].join('\n');
         return [section('core.identity', text, 100, true, 'constraint')];

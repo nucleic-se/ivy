@@ -14,3 +14,11 @@ export const DEFAULT_HEARTBEAT_MS: number | null = null;
 
 export const DEFAULT_AGENT_PACKS = ['core-prompt'] as const;
 export const DEFAULT_PARTICIPANT_PACKS = ['routing-guard'] as const;
+
+/**
+ * Maximum number of continuation rounds within a single wake.
+ * A continuation fires immediately after tool results are posted as notes,
+ * allowing the agent to act on them without sleeping until the next heartbeat.
+ * Cap prevents infinite tool loops; 3 covers the common read→act→answer pattern.
+ */
+export const DEFAULT_MAX_CONTINUATIONS = 3;

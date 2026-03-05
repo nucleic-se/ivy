@@ -184,11 +184,12 @@ describe('LLMAgent', () => {
             calls: [
                 { tool: 'a' }, { tool: 'b' }, { tool: 'c' },
                 { tool: 'd' }, { tool: 'e' }, { tool: 'f' },
+                { tool: 'g' }, { tool: 'h' }, { tool: 'i' },
             ],
         });
         const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
 
-        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 5 entries per tick');
+        await expect(agent.think(baseContext())).rejects.toThrow('calls must not exceed 8 entries per tick');
     });
 
     it('coerces calls as non-array single object into an array', async () => {
@@ -659,6 +660,104 @@ describe('AgentParticipant', () => {
         expect(ctx2.publicContextWindow).toBe(7);
     });
 
+    it('continues immediately after tool results without sleeping', async () => {
+        let callCount = 0;
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            think: vi.fn().mockImplementation(() => {
+                callCount++;
+                if (callCount === 1) {
+                    // First tick: make a tool call
+                    return Promise.resolve([{ type: 'call', tool: 'text/read', args: { path: '/home/a.md' } }] satisfies AgentAction[]);
+                }
+                // Continuation tick: speak using the results
+                return Promise.resolve([{ type: 'speak', text: 'done!' }] satisfies AgentAction[]);
+            }),
+        };
+
+        const participant = new AgentParticipant(agent, room);
+        const mockHandle = vi.fn().mockResolvedValue('file contents');
+        (participant as any).actionHandlers.set('call', { type: 'call', handle: mockHandle });
+
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(participant);
+        room.join(nova);
+
+        participant.start();
+        participant.receive(msg('@nova', 'hey @ivy'));
+
+        // Both think calls happen within the same wake — no heartbeat wait.
+        await vi.waitFor(() => {
+            expect(nova.receive).toHaveBeenCalled();
+        });
+        participant.stop();
+
+        expect(callCount).toBe(2);
+        const lastMsg = nova.receive.mock.calls.at(-1)?.[0] as Message;
+        expect(lastMsg.text).toBe('done!');
+    });
+
+    it('stops continuation when agent returns no tool actions', async () => {
+        let callCount = 0;
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            think: vi.fn().mockImplementation(() => {
+                callCount++;
+                // No tool actions — should not continue
+                return Promise.resolve([{ type: 'speak', text: 'direct reply' }] satisfies AgentAction[]);
+            }),
+        };
+
+        const participant = new AgentParticipant(agent, room);
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(participant);
+        room.join(nova);
+
+        participant.start();
+        participant.receive(msg('@nova', 'hi'));
+
+        await vi.waitFor(() => expect(nova.receive).toHaveBeenCalled());
+        await new Promise(r => setTimeout(r, 30));
+        participant.stop();
+
+        // Exactly one think call — no continuation triggered
+        expect(callCount).toBe(1);
+    });
+
+    it('caps continuations at maxContinuations', async () => {
+        let callCount = 0;
+        const agent: Agent = {
+            handle: '@ivy',
+            displayName: 'Ivy',
+            // Always returns a tool call — would loop forever without the cap
+            think: vi.fn().mockImplementation(() => {
+                callCount++;
+                return Promise.resolve([{ type: 'call', tool: 'text/read', args: { path: '/home/a.md' } }] satisfies AgentAction[]);
+            }),
+        };
+
+        const participant = new AgentParticipant(agent, room, { maxContinuations: 2 });
+        const mockHandle = vi.fn().mockResolvedValue('ok');
+        (participant as any).actionHandlers.set('call', { type: 'call', handle: mockHandle });
+
+        const nova = { handle: '@nova', displayName: 'Nova', receive: vi.fn() };
+        room.join(participant);
+        room.join(nova);
+
+        participant.start();
+        participant.receive(msg('@nova', 'go'));
+
+        // Wait for the cap to be hit: 1 initial + 2 continuations = 3 total think calls
+        await vi.waitFor(() => expect(callCount).toBe(3));
+        await new Promise(r => setTimeout(r, 30));
+        participant.stop();
+
+        // Exactly 3 calls — capped at maxContinuations: 2
+        expect(callCount).toBe(3);
+    });
+
     it('aborts remaining call actions in batch after first failure and posts combined note', async () => {
         const agent: Agent = {
             handle: '@ivy',
@@ -670,7 +769,7 @@ describe('AgentParticipant', () => {
             ] satisfies AgentAction[]),
         };
 
-        const participant = new AgentParticipant(agent, room);
+        const participant = new AgentParticipant(agent, room, { maxContinuations: 0 });
 
         // Inject a mock call handler: first call fails, others would succeed.
         const mockHandle = vi.fn()

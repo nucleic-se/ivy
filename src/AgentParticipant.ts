@@ -27,6 +27,7 @@ import {
     DEFAULT_PRIVATE_CONTEXT_WINDOW,
     DEFAULT_INTERNAL_CONTEXT_WINDOW,
     DEFAULT_HEARTBEAT_MS,
+    DEFAULT_MAX_CONTINUATIONS,
     DEFAULT_PARTICIPANT_PACKS,
     DEFAULT_WAKE_MODE,
 } from './constants.js';
@@ -55,6 +56,13 @@ export interface AgentParticipantConfig {
     /** Sandbox to expose to the agent via fs/call action handlers. */
     sandbox?: Sandbox;
     /**
+     * Maximum number of immediate continuation rounds after tool results are posted.
+     * A continuation lets the agent act on tool results within the same wake, without
+     * waiting for the next heartbeat or external message.
+     * Default: DEFAULT_MAX_CONTINUATIONS (3).
+     */
+    maxContinuations?: number;
+    /**
      * IStore for persisting runtime config (wakeMode, heartbeatMs, context windows) across restarts.
      * Gracefully absent: config becomes ephemeral (no change to in-process behaviour).
      * Explicit constructor config always overrides any persisted value.
@@ -78,6 +86,7 @@ export class AgentParticipant implements Participant {
     // Wake / attention settings (agent-configurable at runtime)
     private wakeMode: WakeMode;
     private heartbeatMs: number | null;
+    private readonly maxContinuations: number;
 
     // Config persistence
     private readonly store: IStore | null;
@@ -107,6 +116,7 @@ export class AgentParticipant implements Participant {
         this.internalContextWindow = config?.internalContextWindow ?? DEFAULT_INTERNAL_CONTEXT_WINDOW;
         this.wakeMode = config?.wakeMode ?? DEFAULT_WAKE_MODE;
         this.heartbeatMs = config?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+        this.maxContinuations = config?.maxContinuations ?? DEFAULT_MAX_CONTINUATIONS;
         this.store = config?.store ?? null;
         this.storeKey = `ivy:agent:${this.handle}:config`;
         this.explicitConfig = {
@@ -315,118 +325,138 @@ export class AgentParticipant implements Participant {
 
     private async process(stimuli: Message[]): Promise<void> {
         const versionAtStart = this.runVersion;
-        const context = this.assembleContext(stimuli);
-        this.logger?.info(`${this.displayName} thinking`, { stimuli: stimuli.length, wakeMode: this.wakeMode });
-        const actions = await this.agent.think(context);
-        this.logger?.info(`${this.displayName} think done`, {
-            actions: actions.length,
-            types: actions.map(a => a.type),
-        });
+        let continuations = 0;
+        let currentStimuli = stimuli;
 
-        // Hard-stop guarantee: do not emit messages after stop()/restart boundaries.
-        if (!this.running || this.runVersion !== versionAtStart) return;
+        while (true) {
+            const context = this.assembleContext(currentStimuli);
+            this.logger?.info(`${this.displayName} thinking`, {
+                stimuli: currentStimuli.length,
+                wakeMode: this.wakeMode,
+                ...(continuations > 0 && { continuation: continuations }),
+            });
+            const actions = await this.agent.think(context);
+            this.logger?.info(`${this.displayName} think done`, {
+                actions: actions.length,
+                types: actions.map(a => a.type),
+            });
 
-        // Configure: apply state changes immediately (order-preserving).
-        let configured = false;
-        for (const action of actions) {
-            if (action.type === 'configure') {
-                configured = true;
-                if (action.wakeOn !== undefined) this.wakeMode = action.wakeOn;
-                if (action.heartbeatMs !== undefined) this.heartbeatMs = action.heartbeatMs;
-                if (action.publicContextWindow !== undefined)
-                    this.publicContextWindow = Math.max(5, Math.floor(action.publicContextWindow));
-                if (action.privateContextWindow !== undefined)
-                    this.privateContextWindow = Math.max(3, Math.floor(action.privateContextWindow));
-                if (action.internalContextWindow !== undefined)
-                    this.internalContextWindow = Math.max(3, Math.floor(action.internalContextWindow));
-            }
-        }
-        if (configured) this.persistConfig();
-
-        // Note: write private self-notes directly (bypass routing guards).
-        for (const action of actions) {
-            if (action.type === 'note') {
-                this.room.note(this.handle, action.text);
-            }
-        }
-
-        // Fs: dispatch to registered action handler; post result as an internal note.
-        for (const action of actions) {
-            if (action.type !== 'fs') continue;
-            const handler = this.actionHandlers.get('fs');
-            if (!handler) {
-                this.logger?.warn(`${this.displayName} has no handler for action type "fs"`);
-                continue;
-            }
-            let result: string;
-            try {
-                result = await handler.handle(action, this.handle);
-            } catch (err) {
-                result = `Error: ${(err as Error).message}`;
-                this.logger?.warn(`${this.displayName} fs action handler error`, { error: (err as Error).message });
-            }
+            // Hard-stop guarantee: do not emit messages after stop()/restart boundaries.
             if (!this.running || this.runVersion !== versionAtStart) return;
-            this.room.note(this.handle, result!);
-        }
 
-        // Call: execute batch, collect all results, post as a single note.
-        // On first failure, remaining calls are skipped (batch-abort). All
-        // results — including the abort notice — appear in the same note so
-        // the agent receives a single coherent summary rather than N fragments.
-        const callActions = actions.filter((a): a is CallAction => a.type === 'call');
-        if (callActions.length > 0) {
-            const handler = this.actionHandlers.get('call');
-            interface CallEntry { tool: string; result: string; failed: boolean }
-            const entries: CallEntry[] = [];
-            let abortedAt = -1;
+            // Configure: apply state changes immediately (order-preserving).
+            let configured = false;
+            for (const action of actions) {
+                if (action.type === 'configure') {
+                    configured = true;
+                    if (action.wakeOn !== undefined) this.wakeMode = action.wakeOn;
+                    if (action.heartbeatMs !== undefined) this.heartbeatMs = action.heartbeatMs;
+                    if (action.publicContextWindow !== undefined)
+                        this.publicContextWindow = Math.max(5, Math.floor(action.publicContextWindow));
+                    if (action.privateContextWindow !== undefined)
+                        this.privateContextWindow = Math.max(3, Math.floor(action.privateContextWindow));
+                    if (action.internalContextWindow !== undefined)
+                        this.internalContextWindow = Math.max(3, Math.floor(action.internalContextWindow));
+                }
+            }
+            if (configured) this.persistConfig();
 
-            for (let i = 0; i < callActions.length; i++) {
-                const action = callActions[i]!;
+            // Note: write private self-notes directly (bypass routing guards).
+            for (const action of actions) {
+                if (action.type === 'note') {
+                    this.room.note(this.handle, action.text);
+                }
+            }
+
+            // Fs: dispatch to registered action handler; post result as an internal note.
+            let hadToolActions = false;
+            for (const action of actions) {
+                if (action.type !== 'fs') continue;
+                hadToolActions = true;
+                const handler = this.actionHandlers.get('fs');
                 if (!handler) {
-                    this.logger?.warn(`${this.displayName} has no handler for action type "call"`);
-                    break;
+                    this.logger?.warn(`${this.displayName} has no handler for action type "fs"`);
+                    continue;
                 }
                 let result: string;
-                let failed = false;
                 try {
                     result = await handler.handle(action, this.handle);
                 } catch (err) {
                     result = `Error: ${(err as Error).message}`;
-                    failed = true;
-                    this.logger?.warn(`${this.displayName} call action handler error`, { tool: action.tool, error: (err as Error).message });
+                    this.logger?.warn(`${this.displayName} fs action handler error`, { error: (err as Error).message });
                 }
                 if (!this.running || this.runVersion !== versionAtStart) return;
-                entries.push({ tool: action.tool, result: result!, failed });
-                if (failed) { abortedAt = i; break; }
+                this.room.note(this.handle, result!);
             }
 
-            // Build the combined note.
-            const lines: string[] = [`[calls: ${callActions.length} op${callActions.length !== 1 ? 's' : ''}]`];
-            for (const e of entries) {
-                lines.push(`${e.failed ? '✗' : '✓'} ${e.tool} → ${e.result}`);
+            // Call: execute batch, collect all results, post as a single note.
+            // On first failure, remaining calls are skipped (batch-abort). All
+            // results — including the abort notice — appear in the same note so
+            // the agent receives a single coherent summary rather than N fragments.
+            const callActions = actions.filter((a): a is CallAction => a.type === 'call');
+            if (callActions.length > 0) {
+                hadToolActions = true;
+                const handler = this.actionHandlers.get('call');
+                interface CallEntry { tool: string; result: string; failed: boolean }
+                const entries: CallEntry[] = [];
+                let abortedAt = -1;
+
+                for (let i = 0; i < callActions.length; i++) {
+                    const action = callActions[i]!;
+                    if (!handler) {
+                        this.logger?.warn(`${this.displayName} has no handler for action type "call"`);
+                        break;
+                    }
+                    let result: string;
+                    let failed = false;
+                    try {
+                        result = await handler.handle(action, this.handle);
+                    } catch (err) {
+                        result = `Error: ${(err as Error).message}`;
+                        failed = true;
+                        this.logger?.warn(`${this.displayName} call action handler error`, { tool: action.tool, error: (err as Error).message });
+                    }
+                    if (!this.running || this.runVersion !== versionAtStart) return;
+                    entries.push({ tool: action.tool, result: result!, failed });
+                    if (failed) { abortedAt = i; break; }
+                }
+
+                // Build the combined note.
+                const lines: string[] = [`[calls: ${callActions.length} op${callActions.length !== 1 ? 's' : ''}]`];
+                for (const e of entries) {
+                    lines.push(`${e.failed ? '✗' : '✓'} ${e.tool} → ${e.result}`);
+                }
+                if (abortedAt >= 0) {
+                    const skipped = callActions.length - abortedAt - 1;
+                    if (skipped > 0) {
+                        lines.push(`[batch] ${skipped} remaining call(s) skipped after error in \`${callActions[abortedAt]!.tool}\`. Re-read state before retrying.`);
+                    }
+                }
+                this.room.note(this.handle, lines.join('\n'));
             }
-            if (abortedAt >= 0) {
-                const skipped = callActions.length - abortedAt - 1;
-                if (skipped > 0) {
-                    lines.push(`[batch] ${skipped} remaining call(s) skipped after error in \`${callActions[abortedAt]!.tool}\`. Re-read state before retrying.`);
+
+            // Speak / DM / Coordinate: pass through routing guards before dispatch.
+            const routableActions = actions.filter(
+                (a): a is RoutableAction => a.type === 'speak' || a.type === 'dm' || a.type === 'coordinate',
+            );
+            if (routableActions.length > 0) {
+                const approved = await this.applyRoutingGuards(routableActions);
+
+                // Check again — stop() may have been called during think or guards.
+                if (!this.running || this.runVersion !== versionAtStart) return;
+
+                for (const action of approved) {
+                    this.dispatchAction(action);
                 }
             }
-            this.room.note(this.handle, lines.join('\n'));
-        }
 
-        // Speak / DM / Coordinate: pass through routing guards before dispatch.
-        const routableActions = actions.filter(
-            (a): a is RoutableAction => a.type === 'speak' || a.type === 'dm' || a.type === 'coordinate',
-        );
-        if (routableActions.length === 0) return;
-
-        const approved = await this.applyRoutingGuards(routableActions);
-
-        // Check again — stop() may have been called during think or guards.
-        if (!this.running || this.runVersion !== versionAtStart) return;
-
-        for (const action of approved) {
-            this.dispatchAction(action);
+            // Continuation: if tool results were posted this iteration and we haven't hit
+            // the cap, loop immediately so the agent can act on the results without sleeping.
+            // On continuation ticks, stimuli are empty — the tool results appear in
+            // internalMessages where the agent can see them.
+            if (!hadToolActions || continuations >= this.maxContinuations) break;
+            continuations++;
+            currentStimuli = [];
         }
     }
 

@@ -240,7 +240,7 @@ function findHeadingIndex(lines: string[], heading: string): number {
     if (!bare) return -1;
     for (let i = 0; i < lines.length; i++) {
         const d = headingDepth(lines[i]!);
-        if (d > 0 && lines[i]!.replace(/^#+\s*/, '').trimEnd().includes(bare)) return i;
+        if (d > 0 && lines[i]!.replace(/^#+\s*/, '').trimEnd() === bare) return i;
     }
     return -1;
 }

@@ -457,7 +457,7 @@ describe('AgentParticipant — fs/call action routing', () => {
 
     async function runAction(actions: AgentAction[]): Promise<void> {
         const agent = stubAgent(actions);
-        const p = new AgentParticipant(agent, room, { sandbox });
+        const p = new AgentParticipant(agent, room, { sandbox, maxContinuations: 0 });
         room.join(p);
         p.start();
         p.receive({ id: '1', from: '@human', to: '*', text: 'hi', timestamp: Date.now() });

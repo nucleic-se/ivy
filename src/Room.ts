@@ -59,8 +59,9 @@ export class Room {
         this.assertMember(from);
         if (!this.participants.has(to)) {
             this.logger?.warn(`dm target ${to} is not in the room`, { from });
-            // Notify sender so the agent knows the DM was not delivered.
-            this.note(from, `[System] DM to ${to} failed: no such participant in the room.`);
+            // Drop the message entirely — persisting an undeliverable private payload is a leak.
+            // Return the failure note so callers get a valid Message back.
+            return this.note(from, `[System] Cannot send private message to ${to}: no such participant in the room.`);
         }
         return this.send(from, to, text);
     }

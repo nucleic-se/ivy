@@ -53,6 +53,15 @@ interface StoredOnceReminder {
     createdAt: number;
 }
 
+export interface ScheduleReminderView {
+    owner: string;
+    id: string;
+    type: 'cron' | 'once';
+    schedule: string;
+    message: string;
+    persisted: boolean;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────
 
 /** IScheduler job name for a per-agent cron reminder. */
@@ -117,6 +126,60 @@ export class ScheduleToolPack {
             this._listTool(),
             this._cancelTool(),
         ]).createLayer();
+    }
+
+    /**
+     * Operator-facing read-only view of reminders across one or all agents.
+     * Used by Telegram slash commands to inspect runtime schedules.
+     */
+    async inspectReminders(targetHandle?: string): Promise<ScheduleReminderView[]> {
+        const normalize = (h: string) => h.replace(/^@/, '');
+        const handles = targetHandle
+            ? [normalize(targetHandle)]
+            : [...this.agentStates.keys()].sort();
+
+        const rows: ScheduleReminderView[] = [];
+        for (const handle of handles) {
+            const state = this.agentStates.get(handle);
+            if (!state) continue;
+
+            for (const r of state.cronReminders.values()) {
+                rows.push({
+                    owner: `@${handle}`,
+                    id: r.id,
+                    type: 'cron',
+                    schedule: r.cron,
+                    message: r.message,
+                    persisted: !!state.store,
+                });
+            }
+
+            for (const id of state.onceTimers.keys()) {
+                let message = '(unknown)';
+                let firesAt = '(pending)';
+                if (state.store) {
+                    try {
+                        const stored = await state.store.namespace(this._onceNs(handle)).get<StoredOnceReminder>(id);
+                        if (stored) {
+                            message = stored.message;
+                            firesAt = new Date(stored.firesAt).toISOString();
+                        }
+                    } catch { /* best-effort */ }
+                }
+                rows.push({
+                    owner: `@${handle}`,
+                    id,
+                    type: 'once',
+                    schedule: firesAt,
+                    message,
+                    persisted: !!state.store,
+                });
+            }
+        }
+
+        return rows.sort((a, b) =>
+            a.owner.localeCompare(b.owner) || a.type.localeCompare(b.type) || a.id.localeCompare(b.id),
+        );
     }
 
     // ─── Boot ────────────────────────────────────────────────────

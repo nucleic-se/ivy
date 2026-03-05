@@ -37,6 +37,10 @@ function msg(from: string, text: string, to = '*'): Message {
     return { id: '1', from, to, text, timestamp: Date.now() };
 }
 
+async function flush(): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 0));
+}
+
 // ─── Outbound (receive → notification:send) ──────────────────────
 
 describe('TelegramParticipant outbound', () => {
@@ -162,6 +166,22 @@ describe('TelegramParticipant slash commands', () => {
         expect(dm.text).toBe('hey there');
     });
 
+    it('/dm accepts handles with hyphen/underscore', () => {
+        const ops = { handle: '@ops-bot_1', displayName: 'Ops', receive: vi.fn() };
+        room.join(ops);
+
+        events.trigger('notification:receive', {
+            kind: 'command',
+            key: 'dm',
+            text: '/dm @ops-bot_1 hello',
+        });
+
+        expect(ops.receive).toHaveBeenCalledOnce();
+        const dm = ops.receive.mock.calls[0][0] as Message;
+        expect(dm.to).toBe('@ops-bot_1');
+        expect(dm.text).toBe('hello');
+    });
+
     it('/dm shows usage when format is wrong', () => {
         events.trigger('notification:receive', {
             kind: 'command',
@@ -187,6 +207,170 @@ describe('TelegramParticipant slash commands', () => {
         expect(payload.message).toContain('/dm');
         expect(payload.message).toContain('/mute');
         expect(payload.message).toContain('/filters');
+    });
+});
+
+// ─── Inspector commands ───────────────────────────────────────────
+
+describe('TelegramParticipant inspector commands', () => {
+    it('/schedules lists reminders from schedule inspector', async () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const participant = new TelegramParticipant({
+            handle: '@architect',
+            displayName: 'Architect',
+            scheduleInspector: {
+                list: vi.fn().mockResolvedValue([
+                    { owner: '@ivy', id: 'daily', type: 'cron', schedule: '0 9 * * *', message: 'daily check', persisted: true },
+                ]),
+            },
+        }, room, events as any);
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'schedules', text: '/schedules' });
+        await flush();
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.markdown).toBe(false);
+        expect(payload.message).toContain('1. @ivy | cron | daily');
+        expect(payload.message).toContain('when: 0 9 * * *');
+        expect(payload.message).toContain('note: daily check');
+    });
+
+    it('/tools lists available sandbox tools', () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const sandbox = {
+            listTools: vi.fn().mockReturnValue([
+                { group: 'text', name: 'read', description: 'Read file' },
+                { group: 'schedule', name: 'list', description: 'List reminders' },
+            ]),
+        };
+        const participant = new TelegramParticipant({
+            handle: '@architect',
+            displayName: 'Architect',
+            sandbox: sandbox as any,
+        }, room, events as any);
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'tools', text: '/tools' });
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('text/read');
+        expect(payload.message).toContain('schedule/list');
+    });
+
+    it('/ls reads sandbox directory listing', async () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const sandbox = {
+            execFs: vi.fn().mockResolvedValue('fs:ls /home →\nf  notes.md'),
+        };
+        const participant = new TelegramParticipant({
+            handle: '@architect',
+            displayName: 'Architect',
+            sandbox: sandbox as any,
+        }, room, events as any);
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'ls', text: '/ls /home' });
+        await flush();
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('notes.md');
+    });
+
+    it('/cat uses text/read tool and shows numbered content', async () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const sandbox = {
+            execCall: vi.fn().mockResolvedValue('call:text/read → {"content":"1: hello","from_line":1,"to_line":1,"total_lines":1,"hash":"abc"}'),
+        };
+        const participant = new TelegramParticipant({
+            handle: '@architect',
+            displayName: 'Architect',
+            sandbox: sandbox as any,
+        }, room, events as any);
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'cat', text: '/cat /home/notes.md' });
+        await flush();
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('1: hello');
+    });
+
+    it('/md reads markdown by absolute path', async () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const sandbox = {
+            execFs: vi.fn().mockResolvedValue('fs:read /home/ivy/notes.md →\n# Notes\n\nHello'),
+        };
+        const participant = new TelegramParticipant({
+            handle: '@architect',
+            displayName: 'Architect',
+            sandbox: sandbox as any,
+        }, room, events as any);
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'md', text: '/md /home/ivy/notes.md' });
+        await flush();
+
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.title).toContain('/home/ivy/notes.md');
+        expect(payload.message).toContain('# Notes');
+        expect(payload.markdown).toBe(true);
+    });
+
+    it('/md fuzzy query resolves and reads best markdown match', async () => {
+        const events = makeEventBus();
+        const room = makeRoom();
+        const sandbox = {
+            execCall: vi.fn()
+                .mockResolvedValueOnce('call:text/find → {"results":[{"path":"/home/ivy/tasks/research-notes.md","type":"f"},{"path":"/home/ivy/tasks/plan.md","type":"f"}],"truncated":false}')
+                .mockResolvedValueOnce('call:text/find → {"results":[{"path":"/data/projects/research-log.md","type":"f"}],"truncated":false}'),
+            execFs: vi.fn().mockResolvedValue('fs:read /home/ivy/tasks/research-notes.md →\n# Picked\n\nok'),
+        };
+        const participant = new TelegramParticipant({
+            handle: '@architect',
+            displayName: 'Architect',
+            sandbox: sandbox as any,
+        }, room, events as any);
+        room.join(participant);
+        participant.start();
+
+        events.trigger('notification:receive', { kind: 'command', key: 'md', text: '/md research-notes' });
+        await flush();
+
+        expect(sandbox.execFs).toHaveBeenLastCalledWith({ type: 'fs', op: 'read', path: '/home/ivy/tasks/research-notes.md' }, '@architect');
+        const [, payload] = events.emit.mock.calls[0];
+        expect(payload.message).toContain('# Picked');
+    });
+
+    it('falls back to plain text when markdown send fails', async () => {
+        const events = makeEventBus();
+        events.emit = vi.fn()
+            .mockRejectedValueOnce(new Error('Bad Request: markdown parse error'))
+            .mockResolvedValueOnce(undefined);
+        const room = makeRoom();
+        const participant = new TelegramParticipant(
+            { handle: '@architect', displayName: 'Architect' },
+            room, events as any,
+        );
+        room.join(participant);
+
+        participant.receive(msg('@ivy', '**bad _markdown_**'));
+        await flush();
+        await flush();
+
+        expect(events.emit).toHaveBeenCalledTimes(2);
+        expect(events.emit.mock.calls[0][1].markdown).toBe(true);
+        expect(events.emit.mock.calls[1][1].markdown).toBe(false);
     });
 });
 
@@ -231,11 +415,12 @@ describe('TelegramParticipant filter commands', () => {
         expect(events.emit).not.toHaveBeenCalled();
     });
 
-    it('/mute with no handle sends usage hint', () => {
+    it('/mute with no handle shows mute state', () => {
         events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute' });
 
         const [, payload] = events.emit.mock.calls[0];
-        expect(payload.message).toContain('/mute @handle');
+        expect(payload.message).toContain('Focus mode:');
+        expect(payload.message).toContain('Muted:');
     });
 
     it('/mute does not block messages from other handles', () => {
@@ -249,11 +434,11 @@ describe('TelegramParticipant filter commands', () => {
         expect(events.emit).toHaveBeenCalledOnce();
     });
 
-    // ── /unmute ─────────────────────────────────────────────────
+    // ── /mute off ───────────────────────────────────────────────
 
-    it('/unmute @handle restores a muted handle', () => {
+    it('/mute off @handle restores a muted handle', () => {
         events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
-        events.trigger('notification:receive', { kind: 'command', key: 'unmute', text: '/unmute @nova' });
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute off @nova' });
         events.emit.mockClear();
 
         participant.receive(msg('@nova', 'back again'));
@@ -261,13 +446,13 @@ describe('TelegramParticipant filter commands', () => {
         expect(events.emit).toHaveBeenCalledOnce();
     });
 
-    it('/unmute with no arg clears all mutes', () => {
+    it('/mute off with no handle clears all mutes', () => {
         const ivy = { handle: '@ivy', displayName: 'Ivy', receive: vi.fn() };
         room.join(ivy);
 
         events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
         events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @ivy' });
-        events.trigger('notification:receive', { kind: 'command', key: 'unmute', text: '/unmute' });
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute off' });
         events.emit.mockClear();
 
         participant.receive(msg('@nova', 'nova back'));
@@ -276,8 +461,8 @@ describe('TelegramParticipant filter commands', () => {
         expect(events.emit).toHaveBeenCalledTimes(2);
     });
 
-    it('/unmute with no arg sends all-clear confirmation', () => {
-        events.trigger('notification:receive', { kind: 'command', key: 'unmute', text: '/unmute' });
+    it('/mute off with no arg sends all-clear confirmation', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute off' });
 
         const [, payload] = events.emit.mock.calls[0];
         expect(payload.message).toContain('All mutes cleared');
@@ -319,11 +504,11 @@ describe('TelegramParticipant filter commands', () => {
         expect(events.emit).toHaveBeenCalledOnce();
     });
 
-    // ── /unfocus ────────────────────────────────────────────────
+    // ── /focus off ──────────────────────────────────────────────
 
-    it('/unfocus restores all traffic after focus', () => {
+    it('/focus off restores all traffic after focus', () => {
         events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
-        events.trigger('notification:receive', { kind: 'command', key: 'unfocus', text: '/unfocus' });
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus off' });
         events.emit.mockClear();
 
         participant.receive(msg('@nova', 'unrelated message', '*'));
@@ -331,8 +516,8 @@ describe('TelegramParticipant filter commands', () => {
         expect(events.emit).toHaveBeenCalledOnce();
     });
 
-    it('/unfocus sends confirmation to Telegram', () => {
-        events.trigger('notification:receive', { kind: 'command', key: 'unfocus', text: '/unfocus' });
+    it('/focus off sends confirmation to Telegram', () => {
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus off' });
 
         const [, payload] = events.emit.mock.calls[0];
         expect(payload.message).toContain('Focus mode OFF');
@@ -342,7 +527,7 @@ describe('TelegramParticipant filter commands', () => {
 
     it('/filters shows focus state and mute list', () => {
         events.trigger('notification:receive', { kind: 'command', key: 'mute', text: '/mute @nova' });
-        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus' });
+        events.trigger('notification:receive', { kind: 'command', key: 'focus', text: '/focus on' });
         events.emit.mockClear();
 
         events.trigger('notification:receive', { kind: 'command', key: 'filters', text: '/filters' });

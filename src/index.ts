@@ -20,6 +20,7 @@ import { SnapshotToolPack } from './packs/SnapshotToolPack.js';
 import { ContextToolPack } from './packs/ContextToolPack.js';
 import { IndexToolPack } from './packs/IndexToolPack.js';
 import { NotifyToolPack } from './packs/NotifyToolPack.js';
+import { ScriptToolPack } from './packs/ScriptToolPack.js';
 import { logCommand } from './logCommand.js';
 import type { Room } from './Room.js';
 
@@ -52,6 +53,7 @@ export { SnapshotToolPack } from './packs/SnapshotToolPack.js';
 export { ContextToolPack } from './packs/ContextToolPack.js';
 export { IndexToolPack } from './packs/IndexToolPack.js';
 export { NotifyToolPack } from './packs/NotifyToolPack.js';
+export { ScriptToolPack } from './packs/ScriptToolPack.js';
 
 const bundle: Bundle = (() => {
     // Instance-scoped lifecycle state — safe even if multiple app instances exist.
@@ -105,13 +107,14 @@ const bundle: Bundle = (() => {
                 sandbox.mount(new JsonToolPack(sandbox).createLayer());
                 sandbox.mount(new HistoryToolPack(room).createLayer());
                 sandbox.mount(new LedgerToolPack(sandbox).createLayer());
-                sandbox.mount(new SopToolPack(sandbox).createLayer());
-                sandbox.mount(new ManifestToolPack(sandbox).createLayer());
+                // sandbox.mount(new SopToolPack(sandbox).createLayer());      // disabled: niche prerequisite format, not adopted
+                // sandbox.mount(new ManifestToolPack(sandbox).createLayer()); // disabled: superseded by validate/run MANIFEST_UNDOC
                 sandbox.mount(new BatchToolPack(sandbox).createLayer());
-                sandbox.mount(new SnapshotToolPack(sandbox).createLayer());
+                // sandbox.mount(new SnapshotToolPack(sandbox).createLayer()); // disabled: only 2 organic calls in full history; batch/apply rollback covers the use case
                 sandbox.mount(new ContextToolPack(sandbox).createLayer());
                 sandbox.mount(new IndexToolPack(sandbox).createLayer());
                 sandbox.mount(new NotifyToolPack(events).createLayer());
+                sandbox.mount(new ScriptToolPack(sandbox).createLayer());
 
                 const parseCallJson = (raw: string): Record<string, unknown> => {
                     const arrow = raw.indexOf(' → ');
@@ -138,11 +141,15 @@ const bundle: Bundle = (() => {
                         'ROUTING RESPONSIBILITIES:',
                         'When a task requires @nova, DM @nova with a clear brief. When @nova responds, synthesise her output into a single clean message to @architect — do not relay her words verbatim or narrate the internal process.',
                         '@architect should rarely need to talk to @nova directly — you are the relay.',
-                        'If @architect does address @nova directly, that is fine — but you still own the thread and follow up.',
+                        'If @architect directly addresses @nova or another agent by name, stay silent. Do not intercept, re-route, or follow up on their thread. Let the conversation complete on its own.',
                         '',
                         'STEWARD RESPONSIBILITIES:',
                         'You own the Steward ledger. @nova does not write to it directly.',
                         'All periodic reports to @architect (4-hour summaries, scheduled pulses) are your responsibility to synthesise and deliver. @nova contributes data via DM; you write the report.',
+                        '',
+                        'FILE DISCIPLINE:',
+                        'Use /tmp/ for all intermediate and throwaway files. /tmp is excluded from validation.',
+                        'Only write to /home/ivy/ for durable artifacts: task files, CONTEXT.md, AGENTS.md. Any file you create in /home/ivy/ must be registered in index.md.',
                         '',
                         'DM DISCIPLINE:',
                         'When coordinating with @nova, be terse and directive. No "acknowledged", "copy that", or "substrate clinical" back-and-forth. One DM with the brief; one DM with the result.',
@@ -175,12 +182,18 @@ const bundle: Bundle = (() => {
                         'Never broadcast interim status, progress narration, or "staging X" updates to the room — use DM to @ivy or internal notes.',
                         'Never duplicate a response @ivy has already given.',
                         '',
+                        'FILE DISCIPLINE:',
+                        'Use /tmp/ for all intermediate and throwaway files (fetched pages, parsed extracts, staging files). /tmp is excluded from validation.',
+                        'Only write to /home/nova/ for durable artifacts: task files, CONTEXT.md, AGENTS.md. Any file you create in /home/nova/ must be registered in index.md.',
+                        'Never write a work file to /home/nova/ just to read it back one step later — use /tmp/ for that.',
+                        '',
                         'DM DISCIPLINE:',
                         'When reporting to @ivy, be terse: state the result and the relevant path. No acknowledgment chains.',
                         'Do not write to the Steward ledger directly — @ivy owns it. DM @ivy with data; she updates the ledger.',
                         '',
                         'HEARTBEAT SELF-MANAGEMENT:',
                         'Default: null (off) — you wake on mentions only. When @ivy assigns a multi-tick task, set heartbeatMs: 60000 for the duration, then return to null on completion.',
+                        'When any task ends — including ad-hoc interrupts from @architect — immediately emit configure { heartbeatMs: null } before doing anything else. Do not stay on 60s heartbeat between tasks.',
                         'If @architect locks your heartbeat, do not self-adjust until released. Record the lock in your CONTEXT.md.',
                     ].join('\n'),
                     sandbox,
@@ -219,6 +232,10 @@ const bundle: Bundle = (() => {
                 const architect = new TelegramParticipant({
                     handle: '@architect',
                     displayName: 'Architect',
+                    sandbox,
+                    scheduleInspector: {
+                        list: (targetHandle?: string) => schedulePack.inspectReminders(targetHandle),
+                    },
                 }, room, events, logger);
 
                 // ── Wire reminder observe callbacks ─────────────────────

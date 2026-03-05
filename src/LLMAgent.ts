@@ -114,8 +114,8 @@ const RESPONSE_SCHEMA = {
                 },
                 required: ['tool'],
             },
-            maxItems: 5,
-            description: 'Sandbox tool calls ONLY (e.g. text/read, json/set, schedule/list). NEVER use this for dm, speak, note, fs, or configure — those are top-level fields. Use multiple entries for atomic multi-step operations. Maximum 5.',
+            maxItems: 8,
+            description: 'Sandbox tool calls ONLY (e.g. text/read, json/set, schedule/list). NEVER use this for dm, speak, note, fs, or configure — those are top-level fields. Use multiple entries for atomic multi-step operations. Maximum 8.',
         },
     },
     required: [],
@@ -287,8 +287,8 @@ export class LLMAgent implements Agent {
         if (raw.calls !== undefined) {
             if (!Array.isArray(raw.calls))
                 throw new Error('LLM output calls must be an array');
-            if (raw.calls.length > 5)
-                throw new Error('LLM output calls must not exceed 5 entries per tick');
+            if (raw.calls.length > 8)
+                throw new Error('LLM output calls must not exceed 8 entries per tick');
             for (const [i, c] of (raw.calls as unknown[]).entries()) {
                 if (typeof c !== 'object' || c === null)
                     throw new Error(`LLM output calls[${i}] must be an object`);

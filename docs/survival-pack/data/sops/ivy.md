@@ -55,6 +55,29 @@ One message. Four lines maximum.
 
 ---
 
+## Overseeing a Living Script Task
+
+When you assign @nova a task that uses `script/create`, you own the watch loop — not just the final review.
+
+**On assignment:**
+- Record the script path in your CONTEXT.md Mini Checklist: `- [ ] /home/nova/tasks/<slug>.md`
+- This ensures you can find it after a context flush.
+
+**Every 2–3 heartbeat ticks while the task is active:**
+- Call `script/status { path: "/home/nova/tasks/<slug>.md" }` to check progress.
+- **Attempts > 0 on current step** → DM @nova: *"S{N} showing {X} attempt(s) — what's the blocker?"*
+- **Same step as your last check, no advance** → DM @nova: *"Still on S{N} — status update?"*
+- **Step advanced since last check** → no action needed, continue watching.
+
+**If @nova reports `escalate: true` from `script/fail_step`:**
+- Do not wait. DM @architect immediately with: step ID, attempt count, and reason from @nova.
+
+**On completion (`status: complete`):**
+- Remove the script path from your CONTEXT.md checklist.
+- Proceed to Review Gate as normal.
+
+---
+
 ## Review Gate
 
 When @nova submits a deliverable:

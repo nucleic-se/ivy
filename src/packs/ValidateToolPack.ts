@@ -101,7 +101,7 @@ function* walkTree(
 
 /**
  * Extract relative markdown link targets from file content.
- * Strips fragments (#section) and skips external/mailto links.
+ * Strips fragments (#section) and skips non-file URIs (http, mailto, data).
  */
 function extractMarkdownLinks(content: string): string[] {
     const re = /\[[^\]]*\]\(([^)]+)\)/g;
@@ -110,7 +110,7 @@ function extractMarkdownLinks(content: string): string[] {
     while ((m = re.exec(content)) !== null) {
         const href = m[1]!.trim().split('#')[0]!;
         if (!href) continue;
-        if (href.startsWith('http') || href.startsWith('mailto:')) continue;
+        if (href.startsWith('http') || href.startsWith('mailto:') || href.startsWith('data:')) continue;
         links.push(href);
     }
     return links;
@@ -221,7 +221,7 @@ function checkContextSchema(
         violations.push({
             rule: 'CONTEXT_SCHEMA',
             path: agentPath,
-            hint: `Missing section(s): ${missing.map(s => `"${s}"`).join(', ')}. See /data/protocols/MEMORY.md.`,
+            hint: `Missing section(s): ${missing.map(s => `"${s}"`).join(', ')}. See /data/protocols/WORKFLOW.md for the CONTEXT.md format.`,
         });
     }
 }
@@ -280,7 +280,7 @@ export class ValidateToolPack {
         const { sandbox } = this;
         const realBase = sandbox.resolveExisting(agentPath);
         if (!fs.statSync(realBase).isDirectory()) {
-            throw new Error(`Path must be a directory: ${agentPath}`);
+            throw new Error(`Path must be a directory, got a file: ${agentPath} — pass the parent directory instead (e.g. "${agentPath.slice(0, agentPath.lastIndexOf('/')) || '/'}")`);
         }
 
         const violations: Violation[] = [];
