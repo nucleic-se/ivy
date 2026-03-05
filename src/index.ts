@@ -1,4 +1,5 @@
-import type { Bundle, IFetcher, IScheduler, IStore } from '@nucleic-se/gears';
+import type { Bundle, IFetcher, ILLMProvider, IScheduler, IStore, LLMProviderOptions } from '@nucleic-se/gears';
+import { createLLMProvider } from '@nucleic-se/gears';
 import { IvyServiceProvider } from './IvyServiceProvider.js';
 import { LLMAgent } from './LLMAgent.js';
 import { AgentParticipant } from './AgentParticipant.js';
@@ -75,12 +76,21 @@ const bundle: Bundle = (() => {
         async init(app) {
             if (started) return;
             const logger = app.make('ILogger');
-            const llm = app.make('ILLMProvider');
+            const defaultLlm = app.make('ILLMProvider') as ILLMProvider;
             const events = app.make('IEventBus');
             const room = app.make('ivy.Room');
 
             try {
                 const fetcher = app.make('IFetcher') as IFetcher;
+                const metrics = (app.makeOrNull('IMetrics') ?? undefined) as LLMProviderOptions['metrics'];
+
+                async function agentLlm(handle: string): Promise<ILLMProvider> {
+                    const key = `${handle.replace('@', '').toUpperCase()}_LLM_PROVIDER`;
+                    const override = process.env[key];
+                    if (!override) return defaultLlm;
+                    return createLLMProvider({ provider: override, metrics, fetcher });
+                }
+
                 let scheduler: IScheduler | null = null;
                 let store: IStore | null = null;
                 try { scheduler = app.make('IScheduler'); } catch { /* optional */ }
@@ -143,7 +153,7 @@ const bundle: Bundle = (() => {
                         'Keep Heartbeat: field in your CONTEXT.md current at all times.',
                     ].join('\n'),
                     sandbox,
-                }, llm);
+                }, await agentLlm('@ivy'));
 
                 const novaAgent = new LLMAgent({
                     handle: '@nova',
@@ -174,7 +184,7 @@ const bundle: Bundle = (() => {
                         'If @architect locks your heartbeat, do not self-adjust until released. Record the lock in your CONTEXT.md.',
                     ].join('\n'),
                     sandbox,
-                }, llm);
+                }, await agentLlm('@nova'));
 
                 const sentinelAgent = new LLMAgent({
                     handle: '@sentinel',
@@ -197,7 +207,7 @@ const bundle: Bundle = (() => {
                         '- Do not debate results. If disputed, re-run the tool and report again.',
                     ].join('\n'),
                     sandbox,
-                }, llm);
+                }, await agentLlm('@sentinel'));
 
                 // ── Participants (room adapters) ────────────────────────
                 const baseConfig = store ? { sandbox, store } : { sandbox };

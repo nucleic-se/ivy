@@ -105,7 +105,7 @@ const normAgentPath = normAgentPathShared;
 
 function readFileLines(realPath: string): string[] {
     const st = fs.statSync(realPath);
-    if (st.isDirectory()) throw new Error('Path is a directory');
+    if (st.isDirectory()) throw new Error('Path is a directory — use text/tree to list its contents, or specify a file path inside it');
     if (st.size > MAX_FILE_BYTES) {
         throw new Error(`File too large (${st.size} B, limit ${MAX_FILE_BYTES} B). Use fs:read for raw access.`);
     }
@@ -470,6 +470,10 @@ export class TextToolPack {
                 after_line: { type: 'number', description: '1-based line number to insert after; 0 = prepend.', required: false },
             },
             returns: '{ ok, inserted_lines, total_lines }',
+            examples: [
+                '{"calls": [{"tool": "text/insert", "args": {"path": "/home/agent/notes.md", "content": "new line\\n", "after_match": "## Section Header"}}]}',
+                '{"calls": [{"tool": "text/insert", "args": {"path": "/home/agent/notes.md", "content": "new line\\n", "after_line": 5}}]}',
+            ],
             handler: async (args, callerHandle) => {
                 const agentPath = normAgentPath(requireString(args, 'path'));
                 sandbox.assertWritable(agentPath, callerHandle);
@@ -480,7 +484,7 @@ export class TextToolPack {
                 const hasMatch = args['after_match'] != null;
                 const hasLine  = args['after_line'] != null;
                 if (hasMatch && hasLine) throw new Error('Provide either after_match or after_line, not both');
-                if (!hasMatch && !hasLine) throw new Error('One of after_match or after_line is required');
+                if (!hasMatch && !hasLine) throw new Error('One of after_match or after_line is required — use after_match with a unique string from the file (preferred), or after_line with a 1-based line number (use 0 to prepend)');
 
                 let afterIndex: number; // 0-based splice position (insert before this index)
                 if (hasMatch) {
@@ -542,7 +546,7 @@ export class TextToolPack {
                 const stale = checkHash(args, real, agentPath);
                 if (stale) return stale;
                 const st = fs.statSync(real);
-                if (st.isDirectory()) throw new Error('Path is a directory');
+                if (st.isDirectory()) throw new Error('Path is a directory — use text/tree to list its contents, or specify a file path inside it');
                 if (st.size > MAX_FILE_BYTES) throw new Error('File too large');
 
                 const oldText = requireString(args, 'old');
@@ -758,7 +762,7 @@ export class TextToolPack {
                 const agentPath = normAgentPath(requireString(args, 'path'));
                 const real = sandbox.resolveExisting(agentPath);
                 const st = fs.statSync(real);
-                if (st.isDirectory()) throw new Error(`Path is a directory: ${agentPath}`);
+                if (st.isDirectory()) throw new Error(`Path is a directory — use text/tree to list its contents, or specify a file path inside it`);
                 if (st.size > MAX_FILE_BYTES) throw new Error(`File too large: ${agentPath}`);
 
                 // Validate destination before doing the expensive Defuddle work.

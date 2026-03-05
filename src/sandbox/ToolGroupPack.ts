@@ -111,6 +111,20 @@ class ToolGroupLayer implements SandboxLayer {
                 `Run: fs ls /tools/${this.groupName}`,
             );
         }
+        // Validate required params before calling the handler.
+        if (tool.parameters) {
+            const missing = Object.entries(tool.parameters)
+                .filter(([k, p]) => p.required && args[k] === undefined)
+                .map(([k]) => k);
+            if (missing.length > 0) {
+                const hints: string[] = [];
+                if (missing.includes('path')) hints.push('"path": use text/tree or text/find to discover it first');
+                if (missing.includes('content')) hints.push('"content": read the file first with text/read, then supply the full text');
+                if (missing.includes('description')) hints.push('"description": provide a one-line summary of what the file contains or does');
+                const hintStr = hints.length > 0 ? ` — hints: ${hints.join('; ')}` : '';
+                throw new Error(`missing required argument${missing.length > 1 ? 's' : ''}: ${missing.map(k => `"${k}"`).join(', ')}${hintStr}`);
+            }
+        }
         const result = await tool.handler(args, callerHandle);
         return `call:${qualifiedName} → ${JSON.stringify(result)}`;
     }

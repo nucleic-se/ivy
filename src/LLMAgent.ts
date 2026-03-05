@@ -159,7 +159,6 @@ export class LLMAgent implements Agent {
                 b.system(this.systemPrompt).schema(RESPONSE_SCHEMA as Record<string, unknown>);
             })
             .transform((raw: ThinkResult) => this.validateThinkResult(this.coerceThinkResult(raw)))
-            .retry(1)
             .run();
 
         const actions: AgentAction[] = [];
@@ -246,7 +245,7 @@ export class LLMAgent implements Agent {
         }
         if (raw.speak !== undefined) {
             if (typeof raw.speak !== 'string') throw new Error('LLM output speak must be a string');
-            if (!raw.speak.trim()) throw new Error('LLM output speak must be non-empty when present');
+            if (!raw.speak.trim()) delete raw.speak; // treat empty speak as omitted
         }
         if (raw.dm !== undefined) {
             if (typeof raw.dm !== 'object' || raw.dm === null) throw new Error('LLM output dm must be an object');
@@ -260,7 +259,7 @@ export class LLMAgent implements Agent {
         }
         if (raw.note !== undefined) {
             if (typeof raw.note !== 'string') throw new Error('LLM output note must be a string');
-            if (!raw.note.trim()) throw new Error('LLM output note must be non-empty when present');
+            if (!raw.note.trim()) delete raw.note; // treat empty note as omitted
         }
         if (raw.configure !== undefined) {
             const c = raw.configure;

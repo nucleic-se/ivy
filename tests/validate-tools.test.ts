@@ -304,11 +304,10 @@ describe('home directory validation', () => {
     afterEach(() => cleanup());
 
     const COMPLIANT_CONTEXT = [
-        '## Active Project',
-        '## Current Task',
-        '## Current Protocols',
+        'Active Project: None',
+        'Current Task: None',
         '## Mini Checklist',
-        '## Open Questions',
+        'Blockers: None',
         '## Recent Updates',
     ].join('\n');
 

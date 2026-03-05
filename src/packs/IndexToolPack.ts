@@ -71,7 +71,7 @@ export class IndexToolPack {
 
                 const name = path.basename(agentFilePath);
                 if (name === 'index.md') {
-                    throw new Error('Use text/write to write index.md directly');
+                    throw new Error('index/write cannot target index.md itself — use text/write to edit index.md directly, or use index/refresh to auto-populate missing entries');
                 }
 
                 // Write the file.

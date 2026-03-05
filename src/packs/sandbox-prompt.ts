@@ -45,9 +45,9 @@ const SandboxCallContributor: IPromptContributor<IvyPromptContext> = {
             '## Tool invocation (calls action)',
             'Use "calls" ONLY for sandbox tools (e.g. text/read, json/get, schedule/set, fetch/get).',
             'NEVER put "speak", "dm", "note", "fs", or "configure" in calls — those are top-level response fields.',
-            'Single call:  {"calls": [{"tool": "text/read", "args": {"path": "/home/nova/CONTEXT.md"}}]}',
-            'Batch:        {"calls": [{"tool": "text/write", "args": {...}}, {"tool": "validate/run", "args": {...}}]}  — max 5 per tick',
-            'Read a tool\'s manifest before calling: {"calls": [{"tool": "text/read", "args": {"path": "/tools/<group>/<name>.json"}}]}',
+            'Single:  {"calls": [{"tool": "text/read", "args": {"path": "/home/nova/CONTEXT.md"}}]}',
+            'Batch:   {"calls": [{"tool": "text/write", "args": {...}}, {"tool": "validate/run", "args": {...}}]}  — max 5 per tick',
+            'Always include every required arg — omitting one aborts the entire batch.',
             'Results arrive as internal notes on your next wake. If one call fails the rest are skipped.',
         ].join('\n');
         return [section('sandbox.call', text, 86, true, 'constraint')];

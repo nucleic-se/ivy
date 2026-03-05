@@ -46,9 +46,8 @@ interface Violation {
 const CONTEXT_REQUIRED = [
     'Active Project',
     'Current Task',
-    'Current Protocols',
     'Mini Checklist',
-    'Open Questions',
+    'Blockers',
     'Recent Updates',
 ];
 

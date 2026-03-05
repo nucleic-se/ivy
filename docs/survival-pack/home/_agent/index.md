@@ -1,0 +1,11 @@
+# <Agent> Home
+
+_Rename this directory to `/home/<agentname>/` and update all placeholder text._
+
+Private workspace. Owner-only writes. Cross-agent reads permitted.
+
+## Contents
+- `index.md`: This file.
+- [CONTEXT.md](./CONTEXT.md): Private working state.
+- [AGENTS.md](./AGENTS.md): Agent identity and responsibilities.
+- [tasks/](./tasks/index.md): Living script task files for active work.

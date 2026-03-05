@@ -133,7 +133,11 @@ export class AgentParticipant implements Participant {
      */
     receive(message: Message): void {
         this.queue.push(message);
-        if (this.qualifiesForWake(message)) {
+        const qualifies = this.qualifiesForWake(message);
+        this.logger?.debug(`${this.displayName} received message`, {
+            from: message.from, type: message.to ? 'dm' : 'room', wakes: qualifies,
+        });
+        if (qualifies) {
             this.wakeRequested = true;
             this.wake();
         }
@@ -194,10 +198,25 @@ export class AgentParticipant implements Participant {
 
             // Stimuli may be empty on a pure heartbeat tick — agent sees the empty list.
             const stimuli = this.queue.splice(0);
+            this.logger?.debug(`${this.displayName} woke`, {
+                stimuli: stimuli.length, trigger: stimuli.length > 0 ? 'message' : 'heartbeat',
+            });
             try {
                 await this.process(stimuli);
             } catch (err) {
-                this.logger?.error(`${this.displayName} think error`, { error: (err as Error).message });
+                const msg = (err as Error).message;
+                this.logger?.error(`${this.displayName} think error`, {
+                    error: msg,
+                    stack: (err as Error).stack?.split('\n').slice(0, 4).join(' | '),
+                });
+                // Re-queue stimuli so they are not silently dropped on LLM errors.
+                if (stimuli.length > 0) {
+                    this.queue.unshift(...stimuli);
+                    this.logger?.warn(`${this.displayName} re-queued ${stimuli.length} stimulus/stimuli after think error`);
+                }
+                // Backoff: prevent tight retry loop on persistent provider errors.
+                await new Promise<void>(r => setTimeout(r, 10_000));
+                if (!this.running) break;
             }
         }
     }
@@ -297,7 +316,12 @@ export class AgentParticipant implements Participant {
     private async process(stimuli: Message[]): Promise<void> {
         const versionAtStart = this.runVersion;
         const context = this.assembleContext(stimuli);
+        this.logger?.info(`${this.displayName} thinking`, { stimuli: stimuli.length, wakeMode: this.wakeMode });
         const actions = await this.agent.think(context);
+        this.logger?.info(`${this.displayName} think done`, {
+            actions: actions.length,
+            types: actions.map(a => a.type),
+        });
 
         // Hard-stop guarantee: do not emit messages after stop()/restart boundaries.
         if (!this.running || this.runVersion !== versionAtStart) return;
