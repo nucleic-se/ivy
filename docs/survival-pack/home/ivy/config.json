@@ -1,0 +1,6 @@
+{
+    "displayName": "Ivy",
+    "wakeOn": "all",
+    "scheduleReminders": true,
+    "integrityGate": false
+}

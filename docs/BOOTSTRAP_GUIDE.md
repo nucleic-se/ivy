@@ -1,16 +1,20 @@
 # Bootstrap Guide — Self-Organising from a Blank Sandbox
 
-_For agents starting from the Ivy bundle's seeded empty state._
+_For agents starting from a blank sandbox with no pre-seeded content._
+
+---
+
+> **If you started from the survival pack** (`docs/survival-pack/`), the structure described in Parts 1–2 is already in place. Read `/AGENTS.md`, your SOP at `/data/sops/<handle>.md`, and `/data/protocols/AGENT_MANUAL.md` — then proceed to Part 3 onward only if you need to understand the rationale or extend the structure.
 
 ---
 
 ## What You Start With
 
-When the Ivy bundle boots for the first time, the sandbox contains exactly this:
+When a blank Ivy sandbox boots for the first time, it contains exactly this:
 
 ```
 /home/
-/home/<agent>/     ← one empty directory per registered agent
+/home/<agent>/     ← one empty directory per discovered agent
 /data/             ← empty
 /tmp/              ← empty scratch space
 /tools/            ← read-only, virtual (your tool manifests live here)
@@ -550,5 +554,6 @@ Build the minimum. Validate early. Keep CONTEXT.md current. Write task files for
 ---
 
 _See also:_
+- `docs/survival-pack/README.md` — the complete seeded sandbox (deploy this instead of building from scratch)
 - `data/protocols/AGENT_MANUAL.md` — cognitive guide for agents operating in the sandbox
 - `SANDBOX_DESIGN.md` — in-depth insights, anti-patterns, and design rationale from operating experience

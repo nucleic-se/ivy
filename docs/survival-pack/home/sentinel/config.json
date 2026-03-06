@@ -1,0 +1,6 @@
+{
+    "displayName": "Sentinel",
+    "wakeOn": "mentions",
+    "scheduleReminders": false,
+    "integrityGate": true
+}

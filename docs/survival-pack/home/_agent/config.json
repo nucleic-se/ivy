@@ -1,0 +1,6 @@
+{
+    "displayName": "Agent",
+    "wakeOn": "mentions",
+    "scheduleReminders": false,
+    "integrityGate": false
+}

@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { Bundle, IFetcher, ILLMProvider, IScheduler, IStore, LLMProviderOptions } from '@nucleic-se/gears';
 import { createLLMProvider } from '@nucleic-se/gears';
 import { IvyServiceProvider } from './IvyServiceProvider.js';
@@ -54,6 +56,75 @@ export { ContextToolPack } from './packs/ContextToolPack.js';
 export { IndexToolPack } from './packs/IndexToolPack.js';
 export { NotifyToolPack } from './packs/NotifyToolPack.js';
 export { ScriptToolPack } from './packs/ScriptToolPack.js';
+
+// ─── Agent discovery ─────────────────────────────────────────────────────────
+
+interface AgentConfig {
+    displayName: string;
+    wakeOn?: 'all' | 'mentions' | 'dm' | 'none';
+    scheduleReminders?: boolean;
+    integrityGate?: boolean;
+}
+
+interface DiscoveredAgent extends AgentConfig {
+    handle: string;
+    systemPrompt: string;
+}
+
+/**
+ * Scan `<sandboxRoot>/home/` for agent directories.
+ * An agent directory is any non-underscore-prefixed subdirectory containing a `config.json`.
+ * `system-prompt.md` is optional — loaded if present, empty string otherwise.
+ * Underscore-prefixed directories (e.g. `_agent`) are skipped (template marker).
+ */
+function discoverAgents(
+    sandboxRoot: string,
+    logger: { warn(message: string, context?: Record<string, unknown>): void },
+): DiscoveredAgent[] {
+    const homeDir = path.join(sandboxRoot, 'home');
+    let entries: fs.Dirent[];
+    try {
+        entries = fs.readdirSync(homeDir, { withFileTypes: true });
+    } catch {
+        logger.warn('Agent discovery: could not read home directory', { homeDir });
+        return [];
+    }
+
+    const agents: DiscoveredAgent[] = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('_')) continue;
+
+        const configPath = path.join(homeDir, entry.name, 'config.json');
+        if (!fs.existsSync(configPath)) continue;
+
+        let config: AgentConfig;
+        try {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as AgentConfig;
+        } catch (err) {
+            logger.warn(`Agent discovery: skipping home/${entry.name} — invalid config.json`, {
+                error: (err as Error).message,
+            });
+            continue;
+        }
+
+        if (!config.displayName) {
+            logger.warn(`Agent discovery: skipping home/${entry.name} — config.json missing displayName`);
+            continue;
+        }
+
+        const promptPath = path.join(homeDir, entry.name, 'system-prompt.md');
+        const systemPrompt = fs.existsSync(promptPath)
+            ? fs.readFileSync(promptPath, 'utf8').trim()
+            : '';
+
+        agents.push({ handle: `@${entry.name}`, systemPrompt, ...config });
+    }
+
+    return agents;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const bundle: Bundle = (() => {
     // Instance-scoped lifecycle state — safe even if multiple app instances exist.
@@ -128,90 +199,22 @@ const bundle: Bundle = (() => {
                     const event = notify === 'slack' ? 'notification:slack' : 'notification:telegram';
                     events.emit(event, { title: `Reminder: ${id}`, message });
                 };
+
+                // ── Agent discovery ─────────────────────────────────────
+                // Agents are defined by config.json + system-prompt.md in home/<handle>/.
+                // Underscore-prefixed directories (e.g. _agent) are skipped (template marker).
+                const discovered = discoverAgents(sandbox.root, logger);
+                if (discovered.length === 0) {
+                    logger.warn('No agent configs found in home/ — sandbox has no LLM agents. Deploy a survival pack and restart to activate agents.');
+                }
+
                 const schedulePack = new ScheduleToolPack();
-                schedulePack.registerAgent('@ivy',  { scheduler, store, onFire: reminderOnFire });
-                schedulePack.registerAgent('@nova', { scheduler, store, onFire: reminderOnFire });
+                for (const cfg of discovered) {
+                    if (cfg.scheduleReminders) {
+                        schedulePack.registerAgent(cfg.handle, { scheduler, store, onFire: reminderOnFire });
+                    }
+                }
                 sandbox.mount(schedulePack.createLayer());
-
-                // ── Agents (cognitive cores) ────────────────────────────
-                const ivyAgent = new LLMAgent({
-                    handle: '@ivy',
-                    displayName: 'Ivy',
-                    systemPrompt: [
-                        'You are Ivy, the primary interface between @architect and the agent team.',
-                        'You are the first responder for all messages from @architect — you receive, interpret, and act on them.',
-                        'You speak in clear, concise markdown. You are helpful but not pushy.',
-                        'Keep responses short unless the topic warrants depth.',
-                        '',
-                        'ROUTING RESPONSIBILITIES:',
-                        'When a task requires @nova, DM @nova with a clear brief. When @nova responds, synthesise her output into a single clean message to @architect — do not relay her words verbatim or narrate the internal process.',
-                        '@architect should rarely need to talk to @nova directly — you are the relay.',
-                        'If @architect directly addresses @nova or another agent by name, stay silent. Do not intercept, re-route, or follow up on their thread. Let the conversation complete on its own.',
-                        '',
-                        'DM DISCIPLINE:',
-                        'When coordinating with @nova, be terse and directive. No "acknowledged", "copy that", or "substrate clinical" back-and-forth. One DM with the brief; one DM with the result.',
-                        '',
-                        'HEARTBEAT SELF-MANAGEMENT:',
-                        'Active task → configure heartbeatMs: 60000. Awaiting direction → 300000. No active project + empty intake → null (off).',
-                        'If @architect explicitly sets your heartbeat, enter locked mode — do not self-adjust until released.',
-                    ].join('\n'),
-                    sandbox,
-                }, await agentLlm('@ivy'));
-
-                const novaAgent = new LLMAgent({
-                    handle: '@nova',
-                    displayName: 'Nova',
-                    systemPrompt: [
-                        'You are Nova, the implementation lead. You work in the background.',
-                        'You bring rigorous technical thinking to specifications, drafts, and structured deliverables.',
-                        'You speak in clear, concise markdown. You are direct and opinionated.',
-                        'Keep responses short unless the topic warrants depth.',
-                        '',
-                        'WORKING MODE (non-negotiable):',
-                        '@ivy is the default contact surface. You work in the background unless directly engaged.',
-                        'When @ivy routes a task to you via DM, deliver the result back to @ivy — she synthesises and relays to @architect.',
-                        'When @architect explicitly mentions @nova or DMs @nova, you may respond directly to @architect for that thread.',
-                        'When @architect gives you a standing obligation (e.g. a recurring data fetch), fulfil it directly to @architect.',
-                        'When @architect\'s message implies work for @nova, DM @ivy with what you are about to do before starting — so @ivy can abort her coordination if she was about to issue the same brief.',
-                        '',
-                        'ROOM DISCIPLINE (non-negotiable):',
-                        'Room messages are for completed deliverables, direct responses to @architect, and critical escalations only.',
-                        'Never broadcast interim status, progress narration, or "staging X" updates to the room — use DM to @ivy or internal notes.',
-                        'Never duplicate a response @ivy has already given.',
-                        '',
-                        'DM DISCIPLINE:',
-                        'When reporting to @ivy, be terse: state the result and the relevant path. No acknowledgment chains.',
-                        '',
-                        'HEARTBEAT SELF-MANAGEMENT:',
-                        'Default: null (off) — you wake on mentions only. When @ivy assigns a multi-tick task, set heartbeatMs: 60000 for the duration, then return to null on completion.',
-                        'When any task ends — including ad-hoc interrupts from @architect — immediately emit configure { heartbeatMs: null } before doing anything else. Do not stay on 60s heartbeat between tasks.',
-                        'If @architect locks your heartbeat, do not self-adjust until released. Record the lock in your CONTEXT.md.',
-                    ].join('\n'),
-                    sandbox,
-                }, await agentLlm('@nova'));
-
-                const sentinelAgent = new LLMAgent({
-                    handle: '@sentinel',
-                    displayName: 'Sentinel',
-                    systemPrompt: [
-                        'You are Sentinel (@sentinel), a non-debating compliance validation agent.',
-                        'Your sole function: run validate/run and report results exactly as returned.',
-                        '',
-                        'WHEN ASKED TO VALIDATE a path or project:',
-                        '1. Call validate/run with the specified path.',
-                        '2. If status is "pass": reply with one line — "✓ pass — <N> dirs, <M> files, 0 violations."',
-                        '3. If status is "fail": reply to requester with the full violations list (rule | path | hint, one per line).',
-                        '   Then DM @ivy: "Sentinel report for <path>: FAIL — <N> violations." followed by the violations list.',
-                        '4. On tool error or ambiguous result: DM @architect with the raw error output.',
-                        '',
-                        'RULES:',
-                        '- Never add commentary, opinions, or suggestions. Report only what the tool returns.',
-                        '- Never initiate conversation.',
-                        '- Do not respond to messages not directed at you.',
-                        '- Do not debate results. If disputed, re-run the tool and report again.',
-                    ].join('\n'),
-                    sandbox,
-                }, await agentLlm('@sentinel'));
 
                 // ── Participants (room adapters) ────────────────────────
                 const onDegraded = (handle: string): void => {
@@ -223,9 +226,33 @@ const bundle: Bundle = (() => {
 
                 const baseConfig = store ? { sandbox, store, onDegraded } : { sandbox, onDegraded };
 
-                const ivy = new AgentParticipant(ivyAgent, room, baseConfig, logger);
-                const nova = new AgentParticipant(novaAgent, room, { ...baseConfig, wakeMode: 'mentions' as const }, logger);
-                const sentinel = new AgentParticipant(sentinelAgent, room, { ...baseConfig, wakeMode: 'mentions' as const }, logger);
+                const agentParticipants: AgentParticipant[] = [];
+                let integrityGateTarget: AgentParticipant | undefined;
+
+                for (const cfg of discovered) {
+                    const llmAgent = new LLMAgent({
+                        handle: cfg.handle,
+                        displayName: cfg.displayName,
+                        systemPrompt: cfg.systemPrompt,
+                        sandbox,
+                    }, await agentLlm(cfg.handle));
+
+                    const wakeMode = (cfg.wakeOn ?? 'mentions') as 'all' | 'mentions' | 'dm' | 'none';
+                    const participant = new AgentParticipant(
+                        llmAgent, room, { ...baseConfig, wakeMode }, logger,
+                    );
+
+                    room.join(participant);
+
+                    if (cfg.scheduleReminders) {
+                        schedulePack.setObserve(cfg.handle, text => participant.observe(text));
+                    }
+                    if (cfg.integrityGate) {
+                        integrityGateTarget = participant;
+                    }
+
+                    agentParticipants.push(participant);
+                }
 
                 const architect = new TelegramParticipant({
                     handle: '@architect',
@@ -237,21 +264,12 @@ const bundle: Bundle = (() => {
                 }, room, events, logger);
 
                 // ── Wire up ─────────────────────────────────────────────
-                room.join(ivy);
-                room.join(nova);
-                room.join(sentinel);
+                // join() before boot() — boot() may fire past-due reminders synchronously
+                // via observe() → room.note(), which requires room membership.
                 room.join(architect);
-
-                // ── Wire reminder observe callbacks + boot ───────────────
-                // join() must happen first — boot() may fire past-due once reminders
-                // synchronously via observe() → room.note(), which requires membership.
-                schedulePack.setObserve('@ivy',  text => ivy.observe(text));
-                schedulePack.setObserve('@nova', text => nova.observe(text));
                 await schedulePack.boot();
 
-                ivy.start();
-                nova.start();
-                sentinel.start();
+                for (const p of agentParticipants) p.start();
                 architect.start();
 
                 const runIntegrityGate = async (trigger: 'startup' | 'scheduled'): Promise<void> => {
@@ -291,7 +309,7 @@ const bundle: Bundle = (() => {
                             'Scope excludes /tmp by design.',
                             sample,
                         ].join('\n');
-                        sentinel.observe(summary);
+                        integrityGateTarget?.observe(summary);
                         logger.warn('Sandbox integrity gate failed', {
                             trigger,
                             violations: violations.length,
@@ -299,7 +317,7 @@ const bundle: Bundle = (() => {
                         });
                     } catch (err) {
                         const message = `[integrity:${trigger}] ERROR — ${(err as Error).message}`;
-                        sentinel.observe(message);
+                        integrityGateTarget?.observe(message);
                         logger.error('Sandbox integrity gate error', { trigger, error: (err as Error).message });
                     } finally {
                         integrityGateRunning = false;
@@ -316,12 +334,13 @@ const bundle: Bundle = (() => {
                     );
                 }
 
-                activeParticipants = [ivy, nova, sentinel];
+                activeParticipants = agentParticipants;
                 activeTelegram = architect;
                 activeRoom = room;
                 started = true;
 
-                logger.info('Ivy chatroom started', { participants: ['@ivy', '@nova', '@sentinel', '@architect'] });
+                const agentHandles = discovered.map(c => c.handle);
+                logger.info('Ivy chatroom started', { participants: [...agentHandles, '@architect'] });
             } catch (err) {
                 // Best-effort rollback for partial init.
                 activeParticipants.forEach(a => a.stop());

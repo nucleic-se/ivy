@@ -73,6 +73,8 @@ After copying, boot the app. On first tick @sentinel will run an integrity gate 
     │   ├── CONTEXT.md
     │   ├── AGENTS.md                 ← @ivy identity and responsibilities (read-only)
     │   ├── CORRECTIONS.md            ← @ivy self-authored corrections (auto-loaded every tick)
+    │   ├── config.json               ← runtime config: wakeOn, scheduleReminders, integrityGate
+    │   ├── system-prompt.md          ← static identity loaded once at startup by the runtime
     │   ├── tasks/
     │   │   └── index.md
     │   └── lab/                      ← autonomous R&D workspace
@@ -83,6 +85,8 @@ After copying, boot the app. On first tick @sentinel will run an integrity gate 
     │   ├── CONTEXT.md
     │   ├── AGENTS.md                 ← @nova identity and responsibilities (read-only)
     │   ├── CORRECTIONS.md            ← @nova self-authored corrections (auto-loaded every tick)
+    │   ├── config.json               ← runtime config
+    │   ├── system-prompt.md          ← static identity
     │   ├── tasks/
     │   │   └── index.md
     │   └── lab/                      ← autonomous R&D workspace
@@ -91,12 +95,16 @@ After copying, boot the app. On first tick @sentinel will run an integrity gate 
     ├── sentinel/
     │   ├── index.md
     │   ├── CONTEXT.md
-    │   └── AGENTS.md                 ← @sentinel identity and responsibilities (read-only)
+    │   ├── AGENTS.md                 ← @sentinel identity and responsibilities (read-only)
+    │   ├── config.json               ← runtime config (integrityGate: true)
+    │   └── system-prompt.md          ← static identity
     └── _agent/                       ← template for adding new agents (not deployed)
         ├── index.md
         ├── CONTEXT.md
         ├── AGENTS.md
         ├── CORRECTIONS.md
+        ├── config.json               ← fill in before deploying
+        ├── system-prompt.md          ← fill in before deploying
         └── tasks/
             └── index.md
 ```
@@ -134,11 +142,14 @@ Each agent boots and should:
 ## Adding a New Agent Later
 
 1. Copy `home/_agent/` to `home/<newhandle>/`
-2. Fill in `home/<newhandle>/AGENTS.md` — identity, role, responsibilities
-3. Copy `data/sops/template.md` to `data/sops/<newhandle>.md` and fill it in
-4. Update `data/sops/index.md` to register the new SOP
-5. Update `/AGENTS.md` roster
-6. Run `validate/run /` — should pass
+2. Fill in `home/<newhandle>/config.json` — wakeOn, scheduleReminders, integrityGate
+3. Fill in `home/<newhandle>/system-prompt.md` — static identity and behavioral instructions
+4. Fill in `home/<newhandle>/AGENTS.md` — role, responsibilities (LLM-readable, loaded per-tick)
+5. Copy `data/sops/template.md` to `data/sops/<newhandle>.md` and fill it in
+6. Update `data/sops/index.md` to register the new SOP
+7. Update `/AGENTS.md` roster
+8. Restart the worker — discovery is automatic on boot
+9. Run `validate/run /` — should pass
 
 ---
 
@@ -153,6 +164,7 @@ This pack encodes the patterns that emerged from operating a live multi-agent sa
 - **Global intake backlog** at `/data/projects/tasks.md` — portfolio visibility without duplicating project tasks.
 - **Rich project template** — `tasks.md`, `logs/`, `research/`, shared `CONTEXT.md` from day one.
 - **Living script task files** — program counters that survive context window flushes.
+- **Agent lineup is sandbox-defined** — the runtime discovers agents from `home/*/config.json` on boot. No code changes needed to add, remove, or swap agents. Different sandboxes can have different agent rosters.
 
 ---
 

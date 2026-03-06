@@ -12,6 +12,55 @@ This document captures what that process looks like in practice: how to train ag
 
 ---
 
+## Setting Up a New Sandbox
+
+### Deploy the survival pack
+
+The survival pack (`ivy/docs/survival-pack/`) is the complete filesystem seed. Deploy it into any sandbox root:
+
+```bash
+cp -r docs/survival-pack/* /path/to/sandbox/root/
+```
+
+The sandbox root is `$GEARS_DATA_DIR/sandbox/` (default: `<project>/.gears/sandbox/`). After copying, boot the worker. On first tick @sentinel runs the integrity gate and should report 0 violations.
+
+### How agent identity works
+
+Each agent's home directory contains two runtime files:
+
+**`home/<handle>/config.json`** — machine-readable wiring config:
+```json
+{
+  "displayName": "Ivy",
+  "wakeOn": "all",           // "all" | "mentions" | "dm" | "none"
+  "scheduleReminders": true, // registers with schedule/set tool
+  "integrityGate": false     // receives integrity gate reports (one agent max)
+}
+```
+
+**`home/<handle>/system-prompt.md`** — the static identity text loaded once at startup. This is the cognitive frame that doesn't change per-tick. The per-tick AGENTS.md (loaded dynamically every wake) is separate.
+
+The runtime scans `home/` on boot, skips template directories (prefixed with `_`), and instantiates one agent per directory that contains a `config.json`. No code changes needed to add, remove, or swap agents.
+
+### Adding a new agent
+
+1. Copy `home/_agent/` to `home/<newhandle>/`
+2. Fill in `config.json` — wakeOn, scheduleReminders, integrityGate
+3. Fill in `system-prompt.md` — static identity (who they are, core behavioral rules)
+4. Fill in `AGENTS.md` — role, responsibilities (loaded per-tick; LLM-readable)
+5. Copy `data/sops/template.md` → `data/sops/<newhandle>.md` and fill it in
+6. Update `data/sops/index.md` and `/AGENTS.md` roster
+7. Restart the worker — discovery is automatic
+
+### Adjusting an existing agent
+
+- **System prompt** (`system-prompt.md`) — requires a worker restart to take effect (loaded once at boot)
+- **AGENTS.md** — takes effect immediately on the next tick (loaded every wake)
+- **CORRECTIONS.md** — takes effect immediately on the next tick (auto-loaded every tick)
+- **config.json** — requires a worker restart
+
+---
+
 ## The Training Loop
 
 Agent behavior is shaped at three levels, in order of durability:

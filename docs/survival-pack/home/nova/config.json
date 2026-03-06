@@ -1,0 +1,6 @@
+{
+    "displayName": "Nova",
+    "wakeOn": "mentions",
+    "scheduleReminders": true,
+    "integrityGate": false
+}
