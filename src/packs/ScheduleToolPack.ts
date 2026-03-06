@@ -35,6 +35,7 @@ interface AgentState {
     scheduler: IScheduler | null;
     store: IStore | null;
     observeFn: ((text: string) => void) | null;
+    onFire: ((id: string, message: string, notify: string) => void) | null;
     onceTimers: Map<string, ReturnType<typeof setTimeout>>;
     cronReminders: Map<string, StoredCronReminder>;
 }
@@ -44,6 +45,7 @@ interface StoredCronReminder {
     message: string;
     cron: string;
     createdAt: number;
+    notify?: string; // 'telegram' | 'slack'
 }
 
 interface StoredOnceReminder {
@@ -51,6 +53,7 @@ interface StoredOnceReminder {
     message: string;
     firesAt: number;
     createdAt: number;
+    notify?: string; // 'telegram' | 'slack'
 }
 
 export interface ScheduleReminderView {
@@ -60,6 +63,7 @@ export interface ScheduleReminderView {
     schedule: string;
     message: string;
     persisted: boolean;
+    notify?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -88,6 +92,8 @@ export class ScheduleToolPack {
     registerAgent(handle: string, options: {
         scheduler?: IScheduler | null;
         store?: IStore | null;
+        /** Called when a reminder fires and has notify set. Bridges to notification channels. */
+        onFire?: ((id: string, message: string, notify: string) => void) | null;
     }): void {
         const h = handle.replace(/^@/, '');
         this.agentStates.set(h, {
@@ -95,6 +101,7 @@ export class ScheduleToolPack {
             scheduler: options.scheduler ?? null,
             store: options.store ?? null,
             observeFn: null,
+            onFire: options.onFire ?? null,
             onceTimers: new Map(),
             cronReminders: new Map(),
         });
@@ -151,6 +158,7 @@ export class ScheduleToolPack {
                     schedule: r.cron,
                     message: r.message,
                     persisted: !!state.store,
+                    ...(r.notify && { notify: r.notify }),
                 });
             }
 
@@ -205,7 +213,7 @@ export class ScheduleToolPack {
                 for (const r of Object.values(stored)) {
                     if (r.firesAt <= now) {
                         // Past due — fire and clean up.
-                        this._fire(state, r.id, r.message);
+                        this._fire(state, r.id, r.message, r.notify);
                         ns.delete(r.id).catch(() => { /* best-effort */ });
                     } else {
                         this._armOnce(state, r, ns);
@@ -224,15 +232,16 @@ export class ScheduleToolPack {
         return this.agentStates.get(callerHandle.replace(/^@/, ''));
     }
 
-    private _fire(state: AgentState, id: string, message: string): void {
+    private _fire(state: AgentState, id: string, message: string, notify?: string): void {
         state.observeFn?.(`[reminder:${id}] ${message}`);
+        if (notify) state.onFire?.(id, message, notify);
     }
 
     private _scheduleCron(state: AgentState, r: StoredCronReminder): void {
         if (!state.scheduler) return;
         state.scheduler.schedule(
             r.cron,
-            () => this._fire(state, r.id, r.message),
+            () => this._fire(state, r.id, r.message, r.notify),
             cronJobName(state.handle, r.id),
         );
     }
@@ -240,7 +249,7 @@ export class ScheduleToolPack {
     private _armOnce(state: AgentState, r: StoredOnceReminder, ns: IStore): void {
         const delayMs = Math.max(0, r.firesAt - Date.now());
         const timer = setTimeout(() => {
-            this._fire(state, r.id, r.message);
+            this._fire(state, r.id, r.message, r.notify);
             state.onceTimers.delete(r.id);
             ns.delete(r.id).catch(() => { /* best-effort */ });
         }, delayMs);
@@ -257,6 +266,10 @@ export class ScheduleToolPack {
                 'Schedule a reminder that fires as an internal observation when due.',
                 'type="cron": recurring, 5-field cron expression (e.g. "0 9 * * *" = 9am daily).',
                 'type="once": single, fires at an ISO 8601 datetime (e.g. "2026-06-01T09:00:00").',
+                'notify="telegram" or "slack": also deliver the reminder message text to that channel when it fires.',
+                'Without notify, the reminder only wakes the agent — @architect will NOT see it.',
+                'IMPORTANT: notify sends the static message text set at registration time — NOT any computed result.',
+                'For reminders that fetch live data (e.g. BTC price), omit notify and call notify/telegram explicitly after computing the result.',
                 'Persisted across restarts when IStore is available.',
             ].join(' '),
             parameters: {
@@ -264,6 +277,7 @@ export class ScheduleToolPack {
                 message:  { type: 'string', description: 'Text injected as observation when the reminder fires', required: true },
                 type:     { type: 'string', description: '"cron" for recurring | "once" for a single datetime', required: true },
                 schedule: { type: 'string', description: 'Cron expression (type=cron) or ISO 8601 datetime (type=once)', required: true },
+                notify:   { type: 'string', description: '"telegram" or "slack" — also send to that channel when fired. Omit for internal-only reminders.', required: false },
             },
             returns: '{ ok, id, type, schedule, message, persisted, note } or { error }',
             handler: async (args, callerHandle) => {
@@ -274,10 +288,13 @@ export class ScheduleToolPack {
                 const message  = String(args['message']  ?? '').trim();
                 const type     = String(args['type']     ?? '').trim();
                 const schedule = String(args['schedule'] ?? '').trim();
+                const notifyRaw = args['notify'] != null ? String(args['notify']).trim() : undefined;
+                const notify   = notifyRaw === 'telegram' || notifyRaw === 'slack' ? notifyRaw : undefined;
 
                 if (!id)      return { error: 'id is required' };
                 if (!message) return { error: 'message is required' };
                 if (type !== 'cron' && type !== 'once') return { error: 'type must be "cron" or "once"' };
+                if (notifyRaw && !notify) return { error: `notify must be "telegram" or "slack", got "${notifyRaw}"` };
 
                 // ── Cron ──────────────────────────────────────────────
                 if (type === 'cron') {
@@ -291,7 +308,7 @@ export class ScheduleToolPack {
                     // Replace any existing cron with this id.
                     try { state.scheduler.unschedule(cronJobName(state.handle, id)); } catch { /* ok */ }
 
-                    const reminder: StoredCronReminder = { id, message, cron: schedule, createdAt: Date.now() };
+                    const reminder: StoredCronReminder = { id, message, cron: schedule, createdAt: Date.now(), ...(notify && { notify }) };
 
                     if (state.store) {
                         try {
@@ -313,6 +330,7 @@ export class ScheduleToolPack {
 
                     return {
                         ok: true, id, type: 'cron', schedule, message,
+                        ...(notify && { notify }),
                         persisted: !!state.store,
                         note: state.store ? 'Persisted — survives restarts.' : 'Ephemeral — lost on restart (IStore unavailable).',
                     };
@@ -337,7 +355,7 @@ export class ScheduleToolPack {
                     state.onceTimers.delete(id);
                 }
 
-                const r: StoredOnceReminder = { id, message, firesAt: target.getTime(), createdAt: Date.now() };
+                const r: StoredOnceReminder = { id, message, firesAt: target.getTime(), createdAt: Date.now(), ...(notify && { notify }) };
 
                 if (state.store) {
                     const ns = state.store.namespace(self._onceNs(state.handle));
@@ -345,7 +363,7 @@ export class ScheduleToolPack {
                     self._armOnce(state, r, ns);
                 } else {
                     const timer = setTimeout(() => {
-                        self._fire(state, id, message);
+                        self._fire(state, id, message, r.notify);
                         state.onceTimers.delete(id);
                     }, delayMs);
                     state.onceTimers.set(id, timer);
@@ -356,6 +374,7 @@ export class ScheduleToolPack {
                     firesAt: target.toISOString(),
                     minutesUntil: Math.round(delayMs / 60_000),
                     message,
+                    ...(notify && { notify }),
                     persisted: !!state.store,
                     note: state.store ? 'Persisted — survives restarts.' : 'Ephemeral — lost on restart (IStore unavailable).',
                 };

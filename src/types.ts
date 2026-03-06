@@ -66,11 +66,6 @@ export interface AgentContext {
 export interface SpeakAction    { type: 'speak'; text: string }
 /** Send a private message to a specific participant. */
 export interface DmAction       { type: 'dm'; to: string; text: string }
-/**
- * Semantic alias for a DM used when handing off work to another agent.
- * Routed identically to DmAction (via room.dm()), but signals coordinator intent.
- */
-export interface CoordinateAction { type: 'coordinate'; to: string; text: string }
 /** Write a private self-note, visible only in the agent's own internal history. */
 export interface NoteAction     { type: 'note'; text: string }
 /**
@@ -114,7 +109,7 @@ export interface CallAction {
     args?: Record<string, unknown>;
 }
 
-export type AgentAction = SpeakAction | DmAction | CoordinateAction | NoteAction | ConfigureAction | FsAction | CallAction;
+export type AgentAction = SpeakAction | DmAction | NoteAction | ConfigureAction | FsAction | CallAction;
 
 /**
  * Agent — pure cognitive interface.

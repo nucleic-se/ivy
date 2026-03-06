@@ -214,7 +214,7 @@ export class TelegramParticipant implements Participant {
                 this.sendToTelegram('Filter', `${handle} unmuted.`);
                 return;
             case 'toggle': {
-                const currentlyMuted = this.filter.describe().includes(handle);
+                const currentlyMuted = this.filter.isMuted(handle);
                 if (currentlyMuted) {
                     this.filter.unmute(handle);
                     this.sendToTelegram('Filter', `${handle} unmuted.`);

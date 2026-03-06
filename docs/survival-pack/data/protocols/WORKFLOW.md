@@ -61,6 +61,19 @@ Rules:
 - On unexpected stop: call `script/set_state` to record exactly what the next action is.
 - The final step must always be **Close**: run `validate/gate`, reset CONTEXT.md, DM @lead with the deliverable path.
 
+**Task Ledgers**
+Use `ledger/update` when a project has multiple tasks with ordering or dependency constraints. Keep `task_ledger.json` in the project directory. Ledger rules: tasks move `pending → active → completed` only; activation checks dependencies; lock ACL prevents concurrent edits. Run `ledger/reconcile { repair: true }` to fix inconsistencies. A daily cron can handle this automatically.
+
+**Scheduling Reminders**
+`schedule/set` fires an internal observation to the agent — **@principal will NOT see it without `notify`**. If a reminder needs to reach @principal, always include `notify`:
+```json
+{ "tool": "schedule/set", "args": {
+  "id": "my-reminder", "type": "cron", "schedule": "0 9 * * *",
+  "message": "Check the thing", "notify": "telegram"
+}}
+```
+`notify: "telegram"` — fires to Telegram. `notify: "slack"` — fires to Slack. Omit `notify` for internal-only reminders (e.g. maintenance jobs the agent handles itself).
+
 ---
 
 ## Recovery
@@ -188,15 +201,16 @@ Change heartbeat in the same tick as the event that triggers it.
 
 Your home at `/home/<agent>/` is your private workspace.
 
-**Required files:** `index.md`, `CONTEXT.md`, `AGENTS.md`.
+**Required files:** `index.md`, `CONTEXT.md`. `AGENTS.md` is architect-set and read-only to you. `CORRECTIONS.md` is your agent-writable rules file — auto-loaded every tick alongside `AGENTS.md`.
 
 **Standard layout:**
 ```
 /home/<agent>/
 ├── index.md
 ├── CONTEXT.md
-├── AGENTS.md
-└── tasks/          ← living script task files
+├── AGENTS.md        ← architect-set, read-only
+├── CORRECTIONS.md   ← self-authored rules, agent-writable
+└── tasks/           ← living script task files
     └── index.md
 ```
 

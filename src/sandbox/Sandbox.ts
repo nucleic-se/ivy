@@ -23,7 +23,7 @@
  * 2. Symlink protection: realpathSync() re-validates existing paths; nearest-
  *    ancestor check covers write targets that don't exist yet.
  * 3. Read-only zones: /, /tools — enforced for write/mkdir/rm. /data is writable shared space.
- * 4. Protected roots: /, /home, /tools, /data, /tmp — enforced for rm.
+ * 4. Protected roots: /, /home, /tools, /data, /tmp, /home/<agent> — enforced for rm.
  * 5. Home ACL: write/mkdir/rm/mv on /home/<handle> or /home/<handle>/... is only allowed for
  *    the owning agent. Ownership is identity-based: a handle is registered via ensureAgentHome()
  *    and protected permanently regardless of directory state. Paths whose first segment is not a
@@ -31,7 +31,7 @@
  *    Cross-agent reads (/home/<other>/file) are permitted. callerHandle is optional; when
  *    omitted (internal / test use) the check is skipped.
  * 6. Handle/tool name sanitisation: [a-zA-Z0-9_-] only — enforced on ensureAgentHome() and registerTool().
- * 7. Size limits: reads capped at 512 KB; write content capped at 512 KB.
+ * 7. Size limits: reads and writes capped at MAX_SANDBOX_FILE_BYTES.
  * 8. Resilient tool listing: malformed manifests are silently skipped.
  */
 
@@ -41,14 +41,15 @@ import { getDataDir } from '@nucleic-se/gears';
 import type { FsAction, FsOp } from '../types.js';
 import type { ToolManifest } from './types.js';
 import type { SandboxLayer } from './layer.js';
+import { MAX_SANDBOX_FILE_BYTES } from '../constants.js';
 
-const MAX_READ_BYTES  = 512 * 1024;  // 512 KB
-const MAX_WRITE_BYTES = 512 * 1024;  // 512 KB
+const MAX_READ_BYTES  = MAX_SANDBOX_FILE_BYTES;
+const MAX_WRITE_BYTES = MAX_SANDBOX_FILE_BYTES;
 
 const SAFE_TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
 
 /** Agent-visible path prefixes that agents may not write, mkdir, or rm. */
-const READ_ONLY_PREFIXES = ['/', '/tools'] as const;
+const READ_ONLY_PREFIXES = ['/', '/tools', '/.git', '/.gitignore'] as const;
 
 /** Agent-visible paths that may not be rm'd even if they were writable. */
 const PROTECTED_PATHS = ['/', '/home', '/tools', '/data', '/tmp'] as const;
@@ -173,22 +174,27 @@ export class Sandbox {
                 return `${tag} → ok`;
             }
             case 'rm': {
-                this.assertNotProtected(agentPath);
-                this.assertWritable(agentPath, callerHandle);
+                this.assertWritable(agentPath, callerHandle);   // cross-agent check first → Permission denied
+                this.assertNotProtected(agentPath);             // then structural guard → protected
                 const real = this.resolveExisting(agentPath);
                 if (action.recursive) {
                     fsSync.rmSync(real, { recursive: true, force: true });
                 } else {
                     // Default: files and empty dirs only — agents must opt in to recursive.
-                    fsSync.rmSync(real);
+                    const stat = fsSync.statSync(real);
+                    if (stat.isDirectory()) {
+                        fsSync.rmdirSync(real); // throws ENOTEMPTY if non-empty
+                    } else {
+                        fsSync.unlinkSync(real);
+                    }
                 }
                 return `${tag} → ok`;
             }
             case 'mv': {
                 const rawDest = path.normalize(action.dest ?? '');
                 if (!path.isAbsolute(rawDest)) throw new Error(`Sandbox dest must be absolute, got: ${action.dest}`);
-                this.assertNotProtected(agentPath);
-                this.assertHomeOwner(agentPath, callerHandle);   // src: no assertWritable for source
+                this.assertHomeOwner(agentPath, callerHandle);   // cross-agent check first → Permission denied
+                this.assertNotProtected(agentPath);              // then structural guard → protected
                 this.assertWritable(rawDest, callerHandle);       // dest: covers home ACL + read-only
                 const realSrc  = this.resolveExisting(agentPath);
                 const realDest = this.resolveForWrite(rawDest);
@@ -371,12 +377,26 @@ export class Sandbox {
                 throw new Error(`Path is read-only: ${agentPath}`);
             }
         }
+        // Protect home AGENTS.md — architect-set identity/constraints.
+        // Agents write self-authored corrections to CORRECTIONS.md instead.
+        if (/^\/home\/[^/]+\/AGENTS\.md$/.test(agentPath)) {
+            throw new Error(`Path is read-only: ${agentPath} — write corrections to CORRECTIONS.md`);
+        }
         this.assertHomeOwner(agentPath, callerHandle);
     }
 
     assertNotProtected(agentPath: string): void {
         if ((PROTECTED_PATHS as readonly string[]).includes(agentPath)) {
             throw new Error(`Cannot remove protected sandbox path: ${agentPath}`);
+        }
+        // Also protect registered agent home roots (/home/<handle>) — agents may
+        // delete files inside their home but not the home directory itself.
+        if (agentPath.startsWith('/home/')) {
+            const rest = agentPath.slice('/home/'.length);
+            // Only the exact home root (no further path segments) is protected.
+            if (!rest.includes('/') && rest && this.agentHomes.has(rest)) {
+                throw new Error(`Cannot remove protected sandbox path: ${agentPath}`);
+            }
         }
     }
 

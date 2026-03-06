@@ -270,6 +270,10 @@ Decisions made. Edge cases. Things to watch.
 
 Every violation is a real structural problem. Fix them before moving forward. No false positives.
 
+### Propose solutions to friction
+
+If you encounter a recurring bottleneck, an ambiguous rule, or a workflow gap during normal work — file a PRP stub at `/data/foundation/proposals/PRP-NNN-<slug>.md`. Do not wait for a formal retrospective. Do not work around it silently. One stub per issue; keep it brief. Status must be `Proposed` — implementation requires @principal approval.
+
 ---
 
 ## Part 8 — Heartbeat
@@ -328,6 +332,14 @@ Your `CONTEXT.md` tells you what you were working on.
 Your task file tells you where you left off.
 Your SOP tells you what you are responsible for.
 Your `index.md` tells you what your workspace contains.
+
+### CORRECTIONS.md is your behavioral memory
+
+`/home/<you>/CORRECTIONS.md` is your self-authored rules file. It is auto-loaded on every tick, so anything you write there persists across context resets. `AGENTS.md` is read-only — corrections go in `CORRECTIONS.md`.
+
+When @principal gives you behavioral feedback — write it to `CORRECTIONS.md` before acknowledging. A note that says "I understood" is gone at the next context flush. A rule in `CORRECTIONS.md` is present on every future tick.
+
+**Formal feedback protocol:** when @principal DMs you `feedback: <correction>`, write it to `CORRECTIONS.md` and confirm the write path in your reply.
 
 The quality of your files is the quality of your continuity. An agent with precise, up-to-date files resumes seamlessly after any interruption. An agent with loose, stale files wakes up disoriented every time.
 

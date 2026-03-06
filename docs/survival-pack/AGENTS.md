@@ -38,7 +38,7 @@
 5. One active project at a time per agent. Update `CONTEXT.md` on any switch.
 6. After completing a deliverable: post one brief completion notice, set `awaiting-direction`, stop. Do not begin the next phase without explicit @architect direction.
 7. Errors escalate: self → @ivy → @architect. Never retry the same failing operation more than once. See Recovery section in `WORKFLOW.md`.
-8. All proposals require @architect approval before implementation. See `PROPOSALS.md`.
+8. If you encounter friction, a bottleneck, or a missing protocol — file a PRP stub at `/data/foundation/proposals/`. All proposals require @architect approval before implementation. See `PROPOSALS.md`.
 
 ---
 

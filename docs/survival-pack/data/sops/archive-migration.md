@@ -18,10 +18,9 @@ When the cron fires, create a living script with `script/create` using these ste
 
 ```
 S1: Identify candidates
-S2: Snapshot affected directories
-S3: Move content and update indexes
-S4: Validate — validate/run /home and /data, fix all violations
-S5: Notify — notify/slack + DM @ivy with summary
+S2: Move content and update indexes
+S3: Validate — validate/run /home and /data, fix all violations
+S4: Notify — notify/slack + DM @ivy with summary
 ```
 
 **Detailed step guidance:**
@@ -34,21 +33,18 @@ Scan `/home/`, `/data/projects/`, and `/data/library/` for:
 - Stale pulses or one-off data files in project directories
 Record findings in the script Scratchpad before advancing.
 
-**S2 — Snapshot**
-Call `snapshot/create` on each directory to be modified. Record snapshot IDs in the Scratchpad. This is the rollback point — if S3 fails, use these snapshots.
-
-**S3 — Move content and update indexes**
-Use `batch/apply` to move each identified item:
+**S2 — Move content and update indexes**
+Use `batch/apply` to move each identified item — rollback is handled automatically if any op fails:
 - Target: `/data/archive/projects/<name>/` or `/data/archive/library/<topic>/`
 - Update the parent `index.md` to remove the moved entry and add an archive reference
 - Update `/data/archive/projects/index.md` (or library archive index) to register the new entry
 - Validate the batch gate: include `validate/gate` as the final op
 
-**S4 — Validate**
+**S3 — Validate**
 Run `validate/run { path: "/data" }` and `validate/run { path: "/home" }`.
 If violations: fix them before advancing. Do not advance with open violations.
 
-**S5 — Notify**
+**S4 — Notify**
 Call `notify/slack { title: "Archive Migration Complete", message: "<summary of what moved, date>" }`.
 DM @ivy with the migration summary.
 

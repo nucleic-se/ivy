@@ -14,7 +14,6 @@
  *   text/to_markdown   — convert an HTML file in the sandbox to clean Markdown via Defuddle
  *   text/patch         — apply a unified diff (from fs/diff) to a file in-place
  *   text/section       — read the content block under a markdown heading
- *   text/section_write — replace the content block under a markdown heading
  *
  * Etag / write guards:
  *   text/read returns a "hash" field (MD5 of the full file).
@@ -49,12 +48,13 @@ import { extractMarkdown } from './html.js';
 import { ToolGroupPack, type Tool } from '../sandbox/ToolGroupPack.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
 import { requireString as requireStringShared, normAgentPath as normAgentPathShared } from './pack-helpers.js';
+import { MAX_SANDBOX_FILE_BYTES } from '../constants.js';
 
 // ─── Constants ───────────────────────────────────────────────────
 
 const MAX_FILE_BYTES  = 1 * 1024 * 1024;  // 1 MB max file size for text ops
 const MAX_READ_LINES  = 500;              // max lines returned per read call
-const MAX_WRITE_BYTES = 512 * 1024;       // 512 KB write cap (matches sandbox limit)
+const MAX_WRITE_BYTES = MAX_SANDBOX_FILE_BYTES; // 512 KB write cap (matches sandbox limit)
 const MAX_SEARCH_HITS = 50;              // max matches returned per single-file search
 const MAX_GREP_HITS   = 100;             // max matches returned per cross-file grep
 const MAX_FIND_HITS   = 200;             // max results returned by find
@@ -358,7 +358,6 @@ export class TextToolPack {
             this.treeTool(),
             this.patchTool(),
             this.sectionTool(),
-            this.sectionWriteTool(),
         ]).createLayer();
     }
 
@@ -693,7 +692,9 @@ export class TextToolPack {
             name: 'grep',
             description: [
                 `Search file contents across a directory tree.`,
-                `Returns up to ${MAX_GREP_HITS} matches as { file, line, text } objects.`,
+                `Default mode "content": returns up to ${MAX_GREP_HITS} matches as { file, line, text }[].`,
+                'Mode "files": returns { file, count }[] per file — no line text, much lower token cost for broad searches.',
+                'Mode "count": returns { total } only.',
                 'Use "glob" to restrict which files are searched (e.g. "*.md").',
             ].join(' '),
             parameters: {
@@ -702,8 +703,9 @@ export class TextToolPack {
                 regex: { type: 'boolean', description: 'Treat pattern as a regular expression (default: false)', required: false },
                 case_sensitive: { type: 'boolean', description: 'Case-sensitive match (default: true)', required: false },
                 glob: { type: 'string', description: 'Only search files whose names match this glob (e.g. "*.md")', required: false },
+                mode: { type: 'string', description: '"content" (default) | "files" | "count"', required: false },
             },
-            returns: '{ matches: { file, line, text }[], truncated }',
+            returns: 'mode=content: { matches: { file, line, text }[], truncated } | mode=files: { files: { file, count }[], truncated } | mode=count: { total }',
             handler: async (args) => {
                 const agentPath = normAgentPath(requireString(args, 'path'));
                 const real = sandbox.resolveExisting(agentPath);
@@ -715,8 +717,47 @@ export class TextToolPack {
                 const caseSensitive = args['case_sensitive'] !== false;
                 const globFilter = typeof args['glob'] === 'string' ? args['glob'] : null;
                 const fileRe = globFilter ? globToRegex(globFilter) : null;
+                const mode = typeof args['mode'] === 'string' ? args['mode'] : 'content';
                 const re = buildRegex(pattern, isRegex, caseSensitive);
 
+                if (mode === 'count') {
+                    let total = 0;
+                    for (const entry of walkEntries(real, sandbox.root)) {
+                        if (entry.isDir) continue;
+                        if (fileRe && !fileRe.test(entry.name)) continue;
+                        const fileSt = fs.statSync(entry.abs);
+                        if (fileSt.size > MAX_FILE_BYTES) continue;
+                        let lines: string[];
+                        try { lines = toLines(fs.readFileSync(entry.abs, 'utf-8')); }
+                        catch { continue; }
+                        for (const line of lines) { re.lastIndex = 0; if (re.test(line)) total++; }
+                    }
+                    return { total };
+                }
+
+                if (mode === 'files') {
+                    const files: Array<{ file: string; count: number }> = [];
+                    let truncated = false;
+                    for (const entry of walkEntries(real, sandbox.root)) {
+                        if (entry.isDir) continue;
+                        if (fileRe && !fileRe.test(entry.name)) continue;
+                        const fileSt = fs.statSync(entry.abs);
+                        if (fileSt.size > MAX_FILE_BYTES) continue;
+                        let lines: string[];
+                        try { lines = toLines(fs.readFileSync(entry.abs, 'utf-8')); }
+                        catch { continue; }
+                        const filePath = entry.abs.slice(sandbox.root.length) || '/';
+                        let count = 0;
+                        for (const line of lines) { re.lastIndex = 0; if (re.test(line)) count++; }
+                        if (count > 0) {
+                            files.push({ file: filePath, count });
+                            if (files.length >= MAX_GREP_HITS) { truncated = true; break; }
+                        }
+                    }
+                    return { files, truncated };
+                }
+
+                // mode === 'content' (default)
                 const matches: Array<{ file: string; line: number; text: string }> = [];
                 let truncated = false;
                 outer: for (const entry of walkEntries(real, sandbox.root)) {
@@ -884,7 +925,7 @@ export class TextToolPack {
                 'Read the content block under a specific markdown heading without loading the whole file.',
                 'Returns the body (lines after the heading up to the next equal-or-higher heading),',
                 'plus the heading line, line range, total file lines, and the full-file hash.',
-                'Use the hash with text/section_write "if_hash" to guard against concurrent edits.',
+                'Use the hash with text/replace "if_hash" to guard against concurrent edits.',
             ].join(' '),
             parameters: {
                 path:    { type: 'string', description: 'Absolute sandbox path to the markdown file', required: true },
@@ -916,72 +957,6 @@ export class TextToolPack {
                     hash:         fileHash(real),
                     content:      bodyLines.join('\n') + (bodyLines.length > 0 ? '\n' : ''),
                 };
-            },
-        };
-    }
-
-    // ── text/section_write ──────────────────────────────────────
-
-    private sectionWriteTool(): Tool {
-        const { sandbox } = this;
-        return {
-            name: 'section_write',
-            description: [
-                'Replace the body of a markdown section (everything after the heading line up to the',
-                'next equal-or-higher heading) without touching the rest of the file.',
-                'The heading line itself is preserved unchanged.',
-                'Pass the hash from text/section or text/read as "if_hash" to guard against concurrent edits.',
-                'Use "validate: true" to get a manifest check on the parent directory after writing.',
-            ].join(' '),
-            parameters: {
-                path:     { type: 'string',  description: 'Absolute sandbox path to the markdown file', required: true },
-                heading:  { type: 'string',  description: 'Heading to target, e.g. "## Scene 1" or just "Scene 1"', required: true },
-                content:  { type: 'string',  description: 'New body content to place after the heading (the heading line itself is not replaced)', required: true },
-                if_hash:  { type: 'string',  description: 'Reject write if file hash differs from this value.', required: false },
-                validate: { type: 'boolean', description: 'Run a manifest check on the parent directory after writing and return any violations.', required: false },
-            },
-            returns: '{ ok, heading_text, from_line, to_line, total_lines, hash, violations? } or { ok: false, reason: "stale", current_hash }',
-            handler: async (args, callerHandle) => {
-                const agentPath = normAgentPath(requireString(args, 'path'));
-                const heading   = requireString(args, 'heading');
-                const newBody   = requireString(args, 'content');
-
-                sandbox.assertWritable(agentPath, callerHandle);
-                const real  = sandbox.resolveExisting(agentPath);
-
-                const stale = checkHash(args, real, agentPath);
-                if (stale) return stale;
-
-                const lines    = readFileLines(real);
-                const startIdx = findHeadingIndex(lines, heading);
-                if (startIdx < 0) {
-                    throw new Error(`Heading not found in ${agentPath}: "${heading}"`);
-                }
-                const endIdx = sectionEndIndex(lines, startIdx);
-
-                // Normalise the new body: ensure it ends with a newline before splitting.
-                const bodyLines = toLines(newBody.endsWith('\n') ? newBody : newBody + '\n');
-
-                const updated = [
-                    ...lines.slice(0, startIdx + 1),  // everything up to and including the heading
-                    ...bodyLines,
-                    ...lines.slice(endIdx),            // everything from the next heading onwards
-                ];
-
-                writeFileLines(real, updated);
-
-                const result: Record<string, unknown> = {
-                    ok:           true,
-                    heading_text: lines[startIdx]!,
-                    from_line:    startIdx + 2,
-                    to_line:      startIdx + 1 + bodyLines.length,
-                    total_lines:  updated.length,
-                    hash:         fileHash(real),
-                };
-                if (args['validate'] === true) {
-                    result['violations'] = checkParentManifest(real, sandbox.root);
-                }
-                return result;
             },
         };
     }

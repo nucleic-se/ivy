@@ -176,6 +176,69 @@ describe('schedule/set — cron', () => {
         expect(r.persisted).toBe(false);
         expect(r.note).toMatch(/Ephemeral/);
     });
+
+    it('calls onFire callback with notify when cron fires with notify set', async () => {
+        const notified: Array<{ id: string; message: string; notify: string }> = [];
+        const { sandbox, cleanup } = tempSandbox();
+        try {
+            const sched = makeScheduler();
+            const pack = new ScheduleToolPack();
+            pack.registerAgent('@ivy', {
+                scheduler: sched,
+                store: new MemoryStore(),
+                onFire: (id, message, notify) => notified.push({ id, message, notify }),
+            });
+            pack.setObserve('@ivy', () => {});
+            sandbox.mount(pack.createLayer());
+
+            await call(sandbox, 'schedule/set', {
+                id: 'alert', message: 'wake up', type: 'cron', schedule: '0 9 * * *', notify: 'telegram',
+            });
+            const task = (sched.schedule as any).mock.calls[0][1] as () => void;
+            task();
+            expect(notified).toEqual([{ id: 'alert', message: 'wake up', notify: 'telegram' }]);
+        } finally { cleanup(); }
+    });
+
+    it('does NOT call onFire when notify is omitted', async () => {
+        const notified: unknown[] = [];
+        const { sandbox, cleanup } = tempSandbox();
+        try {
+            const sched = makeScheduler();
+            const pack = new ScheduleToolPack();
+            pack.registerAgent('@ivy', {
+                scheduler: sched,
+                store: new MemoryStore(),
+                onFire: () => notified.push(true),
+            });
+            pack.setObserve('@ivy', () => {});
+            sandbox.mount(pack.createLayer());
+
+            await call(sandbox, 'schedule/set', {
+                id: 'silent', message: 'internal only', type: 'cron', schedule: '0 9 * * *',
+            });
+            const task = (sched.schedule as any).mock.calls[0][1] as () => void;
+            task();
+            expect(notified).toHaveLength(0);
+        } finally { cleanup(); }
+    });
+
+    it('rejects invalid notify value', async () => {
+        const { sandbox } = fixtures;
+        const r = await call(sandbox, 'schedule/set', {
+            id: 'x', message: 'test', type: 'cron', schedule: '0 9 * * *', notify: 'sms',
+        });
+        expect(r.error).toMatch(/notify must be/);
+    });
+
+    it('includes notify in set result', async () => {
+        const { sandbox } = fixtures;
+        const r = await call(sandbox, 'schedule/set', {
+            id: 'n', message: 'msg', type: 'cron', schedule: '0 9 * * *', notify: 'slack',
+        });
+        expect(r.ok).toBe(true);
+        expect(r.notify).toBe('slack');
+    });
 });
 
 // ─── schedule/set — once ─────────────────────────────────────────

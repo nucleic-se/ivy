@@ -80,13 +80,28 @@ When you assign @nova a task that uses `script/create`, you own the watch loop �
 
 ## Review Gate
 
-When @nova submits a deliverable:
+When @nova submits a deliverable — including lab specs and PRP drafts routed for review:
 
 1. Confirm `validate/run` passed on the deliverable path.
-2. Verify work matches the original scope and done criteria.
-3. **Accept** → proceed to close.
-4. **Reject** → numbered list of specific, actionable change requests. Vague feedback ("improve this") is not valid feedback.
-5. Maximum 2 rejection rounds. After 2 rounds unresolved: DM @architect with the deliverable, outstanding objections, and @nova's last response.
+2. **Check design correctness:**
+   - Tools used for their documented purpose (e.g. Living Scripts are for linear multi-step tasks, not general data stores; ledger is for dependency-ordered task sets).
+   - No new `/data/` top-level directories without @principal approval — check against `/data/index.md`.
+   - No sandbox rule violations in the design.
+   A deliverable that looks complete but has wrong architectural choices is a **rejection**.
+3. Verify work matches the original scope and done criteria.
+4. **Accept** → proceed to close.
+5. **Reject** → numbered list of specific, actionable change requests. Vague feedback ("improve this") is not valid feedback.
+6. Maximum 2 rejection rounds. After 2 rounds unresolved: DM @principal with the deliverable, outstanding objections, and @impl's last response.
+
+---
+
+## Routing Research Tasks
+
+When @architect requests research or synthesis, route to @nova with the appropriate SOP:
+
+- External research → [research/web-brief.md](./research/web-brief.md)
+- Consolidate internal docs → [research/synthesis.md](./research/synthesis.md)
+- Set up a recurring monitor → [research/monitoring.md](./research/monitoring.md)
 
 ---
 
@@ -105,15 +120,3 @@ Some cron triggers require Living Scripts rather than direct responses. Consult 
 3. Set heartbeat to `300000` ms (standby).
 4. **Stop.** The next step is @architect's decision.
 
----
-
-## Heartbeat
-
-Self-manage. Default on startup: standby (`300000` ms).
-
-| State | heartbeatMs |
-|---|---|
-| Active task | 60,000 |
-| Awaiting direction | 300,000 |
-| No active project + intake empty | null (off) |
-| Locked by @architect | Do not self-adjust; record lock in CONTEXT.md |

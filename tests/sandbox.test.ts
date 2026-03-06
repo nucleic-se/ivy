@@ -238,6 +238,19 @@ describe('Sandbox — path security', () => {
         ).rejects.toThrow('read-only');
     });
 
+    it('rejects agent write to their own home AGENTS.md', async () => {
+        await expect(
+            sandbox.execFs({ type: 'fs', op: 'write', path: '/home/ivy/AGENTS.md', content: 'x' }, '@ivy'),
+        ).rejects.toThrow('read-only');
+    });
+
+    it('rejects agent write to another home AGENTS.md', async () => {
+        sandbox.ensureAgentHome('@nova');
+        await expect(
+            sandbox.execFs({ type: 'fs', op: 'write', path: '/home/nova/AGENTS.md', content: 'x' }, '@nova'),
+        ).rejects.toThrow('read-only');
+    });
+
     it('rejects non-existent path for read', async () => {
         await expect(
             sandbox.execFs({ type: 'fs', op: 'read', path: '/home/no-such-file.txt' }),
@@ -377,12 +390,12 @@ describe('Sandbox — path security', () => {
         expect(result).toContain('ok');
     });
 
-    it('remains protected after owner removes their own home directory', async () => {
+    it('remains protected after owner home directory is removed from disk', async () => {
         // Ownership is identity-based — deleting the dir does not vacate the ACL.
         sandbox.ensureAgentHome('@nova');
         sandbox.ensureAgentHome('@ivy');
-        // ivy removes their own home (legitimate self-cleanup)
-        await sandbox.execFs({ type: 'fs', op: 'rm', path: '/home/ivy', recursive: true }, '@ivy');
+        // Simulate home deletion directly on the filesystem (sandbox rm blocks home root deletion).
+        fs.rmSync(path.join(root, 'home', 'ivy'), { recursive: true, force: true });
         // nova must still be blocked from claiming the vacated path
         await expect(
             sandbox.execFs({ type: 'fs', op: 'write', path: '/home/ivy/takeover.txt', content: 'x' }, '@nova'),

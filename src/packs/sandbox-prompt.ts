@@ -3,6 +3,7 @@ import type { IPromptContributor, PromptSection } from '@nucleic-se/gears/agenti
 import { estimateTokens } from '@nucleic-se/gears/agentic';
 import type { IvyAgentPack, IvyPromptContext } from './types.js';
 import type { Sandbox } from '../sandbox/Sandbox.js';
+import { MAX_CALLS_PER_TICK } from '../constants.js';
 
 const MAX_AGENTS_MD_BYTES  = 16 * 1024; // 16 KB cap — instructions, not a novel
 const MAX_CONTEXT_MD_BYTES = 16 * 1024; // 16 KB cap — working memory, not a log
@@ -46,7 +47,7 @@ const SandboxCallContributor: IPromptContributor<IvyPromptContext> = {
             'Use "calls" ONLY for sandbox tools (e.g. text/read, json/get, schedule/set, fetch/get).',
             'NEVER put "speak", "dm", "note", "fs", or "configure" in calls — those are top-level response fields.',
             'Single:  {"calls": [{"tool": "text/read", "args": {"path": "/home/nova/CONTEXT.md"}}]}',
-            'Batch:   {"calls": [{"tool": "text/write", "args": {...}}, {"tool": "validate/run", "args": {...}}]}  — max 20 per tick',
+            `Batch:   {"calls": [{"tool": "text/write", "args": {...}}, {"tool": "validate/run", "args": {...}}]}  — max ${MAX_CALLS_PER_TICK} per tick`,
             'Always include every required arg — omitting one aborts the entire batch.',
             'Results arrive as internal notes on your next wake. If one call fails the rest are skipped.',
         ].join('\n');
@@ -79,13 +80,13 @@ class SandboxToolsContributor implements IPromptContributor<IvyPromptContext> {
 
 /**
  * Reads AGENTS.md files from the sandbox and injects them near the top of
- * the prompt. Two files are checked, in order:
+ * the prompt. Three files are checked, in order:
  *
- *   /AGENTS.md        — operator instructions (root is read-only to agents)
- *   /home/<handle>/AGENTS.md  — personal instructions (agent-editable via text/write)
+ *   /AGENTS.md                      — operator instructions (root is read-only to agents)
+ *   /home/<handle>/AGENTS.md        — architect-set personal identity (read-only to agents)
+ *   /home/<handle>/CORRECTIONS.md   — agent-authored corrections (writable by agent)
  *
- * Each file is silently skipped if absent or empty. When both exist the root
- * file appears first (priority 96 > 95).
+ * Each file is silently skipped if absent or empty.
  */
 class AgentsMdContributor implements IPromptContributor<IvyPromptContext> {
     id = 'sandbox.agents_md';
@@ -95,8 +96,9 @@ class AgentsMdContributor implements IPromptContributor<IvyPromptContext> {
     contribute(ctx: IvyPromptContext): PromptSection[] {
         const handle = ctx.handle.replace(/^@/, '');
         return [
-            ...this.readSection('/AGENTS.md',                   'sandbox.agents_md.root', 96),
-            ...this.readSection(`/home/${handle}/AGENTS.md`,    'sandbox.agents_md.home', 95),
+            ...this.readSection('/AGENTS.md',                         'sandbox.agents_md.root',        96),
+            ...this.readSection(`/home/${handle}/AGENTS.md`,          'sandbox.agents_md.home',        95),
+            ...this.readSection(`/home/${handle}/CORRECTIONS.md`,     'sandbox.agents_md.corrections', 94),
         ];
     }
 

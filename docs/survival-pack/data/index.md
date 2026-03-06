@@ -10,3 +10,5 @@ Shared collaboration space for all agents.
 - [sops/](./sops/index.md): Per-agent Standard Operating Procedures.
 - [library/](./library/index.md): Permanent knowledge base — findings, references, patterns.
 - [templates/](./templates/index.md): Reusable file and project templates.
+- [skills/](./skills/index.md): Shared pattern library — documented, reusable tool-call recipes.
+- [archive/](./archive/index.md): Completed projects and migrated library content (read-only).

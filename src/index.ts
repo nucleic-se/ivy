@@ -123,9 +123,14 @@ const bundle: Bundle = (() => {
                 };
 
                 // Per-agent schedule tools — single layer, routed by callerHandle.
+                // onFire bridges reminder delivery to notification channels (telegram/slack).
+                const reminderOnFire = (id: string, message: string, notify: string) => {
+                    const event = notify === 'slack' ? 'notification:slack' : 'notification:telegram';
+                    events.emit(event, { title: `Reminder: ${id}`, message });
+                };
                 const schedulePack = new ScheduleToolPack();
-                schedulePack.registerAgent('@ivy',  { scheduler, store });
-                schedulePack.registerAgent('@nova', { scheduler, store });
+                schedulePack.registerAgent('@ivy',  { scheduler, store, onFire: reminderOnFire });
+                schedulePack.registerAgent('@nova', { scheduler, store, onFire: reminderOnFire });
                 sandbox.mount(schedulePack.createLayer());
 
                 // ── Agents (cognitive cores) ────────────────────────────
@@ -209,7 +214,14 @@ const bundle: Bundle = (() => {
                 }, await agentLlm('@sentinel'));
 
                 // ── Participants (room adapters) ────────────────────────
-                const baseConfig = store ? { sandbox, store } : { sandbox };
+                const onDegraded = (handle: string): void => {
+                    events.emit('notification:slack', {
+                        title: `${handle} degraded`,
+                        message: `LLM provider returning repeated errors. Queue preserved — agent will recover automatically when the provider responds.`,
+                    });
+                };
+
+                const baseConfig = store ? { sandbox, store, onDegraded } : { sandbox, onDegraded };
 
                 const ivy = new AgentParticipant(ivyAgent, room, baseConfig, logger);
                 const nova = new AgentParticipant(novaAgent, room, { ...baseConfig, wakeMode: 'mentions' as const }, logger);
@@ -224,16 +236,18 @@ const bundle: Bundle = (() => {
                     },
                 }, room, events, logger);
 
-                // ── Wire reminder observe callbacks ─────────────────────
-                schedulePack.setObserve('@ivy',  text => ivy.observe(text));
-                schedulePack.setObserve('@nova', text => nova.observe(text));
-                await schedulePack.boot();
-
                 // ── Wire up ─────────────────────────────────────────────
                 room.join(ivy);
                 room.join(nova);
                 room.join(sentinel);
                 room.join(architect);
+
+                // ── Wire reminder observe callbacks + boot ───────────────
+                // join() must happen first — boot() may fire past-due once reminders
+                // synchronously via observe() → room.note(), which requires membership.
+                schedulePack.setObserve('@ivy',  text => ivy.observe(text));
+                schedulePack.setObserve('@nova', text => nova.observe(text));
+                await schedulePack.boot();
 
                 ivy.start();
                 nova.start();
@@ -277,8 +291,7 @@ const bundle: Bundle = (() => {
                             'Scope excludes /tmp by design.',
                             sample,
                         ].join('\n');
-                        room.dm('@sentinel', '@architect', summary);
-                        room.dm('@sentinel', '@ivy', summary);
+                        sentinel.observe(summary);
                         logger.warn('Sandbox integrity gate failed', {
                             trigger,
                             violations: violations.length,
@@ -286,7 +299,7 @@ const bundle: Bundle = (() => {
                         });
                     } catch (err) {
                         const message = `[integrity:${trigger}] ERROR — ${(err as Error).message}`;
-                        room.dm('@sentinel', '@architect', message);
+                        sentinel.observe(message);
                         logger.error('Sandbox integrity gate error', { trigger, error: (err as Error).message });
                     } finally {
                         integrityGateRunning = false;

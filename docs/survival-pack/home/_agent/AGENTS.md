@@ -53,6 +53,7 @@ Hard limits that cannot be overridden by task scope or @lead direction. Only @pr
 ## File Discipline
 
 - Use `/tmp/` for all intermediate and throwaway files. `/tmp` is excluded from validation.
-- Only write to `/home/<handle>/` for durable artifacts: task files, CONTEXT.md, AGENTS.md.
+- Only write to `/home/<handle>/` for durable artifacts: task files, CONTEXT.md, CORRECTIONS.md.
+- `AGENTS.md` is read-only — write self-authored corrections to `CORRECTIONS.md` (auto-loaded every tick).
 - Any file created in `/home/<handle>/` must be registered in `index.md` in the same batch.
 - Never write a work file to `/home/<handle>/` just to read it back one step later — use `/tmp/` for that.

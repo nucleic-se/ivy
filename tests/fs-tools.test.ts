@@ -1,5 +1,5 @@
 /**
- * Tests for FsToolPack — file-system comparison tools.
+ * Tests for FsToolPack — file-system tools.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -135,6 +135,90 @@ describe('fs/diff', () => {
         write(root, 'a.txt', 'x\n');
         write(root, 'b.txt', 'y\n');
         await expect(call(sandbox, 'diff', { from: 'home/a.txt', to: '/home/b.txt' }))
+            .rejects.toThrow(/absolute/i);
+    });
+});
+
+// ─── fs/rm ───────────────────────────────────────────────────────
+
+describe('fs/rm', () => {
+    let sandbox: Sandbox;
+    let root: string;
+    let cleanup: () => void;
+
+    beforeEach(() => ({ sandbox, root, cleanup } = tempSandbox()));
+    afterEach(() => cleanup());
+
+    it('deletes a file', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        write(root, 'ivy/note.txt', 'bye\n');
+        const raw = await sandbox.execCall('fs/rm', { path: '/home/ivy/note.txt' }, '@ivy');
+        expect(raw).toContain('ok');
+        expect(fs.existsSync(path.join(root, 'home', 'ivy', 'note.txt'))).toBe(false);
+    });
+
+    it('deletes an empty directory', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        fs.mkdirSync(path.join(root, 'home', 'ivy', 'emptydir'), { recursive: true });
+        const raw = await sandbox.execCall('fs/rm', { path: '/home/ivy/emptydir' }, '@ivy');
+        expect(raw).toContain('ok');
+        expect(fs.existsSync(path.join(root, 'home', 'ivy', 'emptydir'))).toBe(false);
+    });
+
+    it('deletes a non-empty directory with recursive: true', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        fs.mkdirSync(path.join(root, 'home', 'ivy', 'subdir'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'home', 'ivy', 'subdir', 'f.txt'), 'x', 'utf-8');
+        const raw = await sandbox.execCall('fs/rm', { path: '/home/ivy/subdir', recursive: true }, '@ivy');
+        expect(raw).toContain('ok');
+        expect(fs.existsSync(path.join(root, 'home', 'ivy', 'subdir'))).toBe(false);
+    });
+
+    it('throws when removing non-empty directory without recursive', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        fs.mkdirSync(path.join(root, 'home', 'ivy', 'nonempty'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'home', 'ivy', 'nonempty', 'f.txt'), 'x', 'utf-8');
+        await expect(sandbox.execCall('fs/rm', { path: '/home/ivy/nonempty' }, '@ivy'))
+            .rejects.toThrow();
+    });
+
+    it('throws for non-existent path', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        await expect(sandbox.execCall('fs/rm', { path: '/home/ivy/ghost.txt' }, '@ivy'))
+            .rejects.toThrow();
+    });
+
+    it('throws for protected root paths', async () => {
+        await expect(call(sandbox, 'rm', { path: '/home' }))
+            .rejects.toThrow(/protected/i);
+        await expect(call(sandbox, 'rm', { path: '/data' }))
+            .rejects.toThrow(/protected/i);
+        await expect(call(sandbox, 'rm', { path: '/tmp' }))
+            .rejects.toThrow(/protected/i);
+    });
+
+    it('throws when agent tries to rm their own home root', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        await expect(sandbox.execCall('fs/rm', { path: '/home/ivy', recursive: true }, '@ivy'))
+            .rejects.toThrow(/protected/i);
+    });
+
+    it('rejects cross-agent home deletion', async () => {
+        sandbox.ensureAgentHome('@ivy');
+        sandbox.ensureAgentHome('@nova');
+        write(root, 'nova/secret.txt', 'private\n');
+        // @test caller (not @nova) tries to delete nova's file
+        await expect(sandbox.execCall('fs/rm', { path: '/home/nova/secret.txt' }, '@ivy'))
+            .rejects.toThrow(/Permission denied/i);
+    });
+
+    it('throws for missing path argument', async () => {
+        await expect(call(sandbox, 'rm', {}))
+            .rejects.toThrow(/"path"/);
+    });
+
+    it('throws for non-absolute path', async () => {
+        await expect(call(sandbox, 'rm', { path: 'home/file.txt' }))
             .rejects.toThrow(/absolute/i);
     });
 });

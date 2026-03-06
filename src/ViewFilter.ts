@@ -54,6 +54,11 @@ export class ViewFilter {
         this.focusMode = on;
     }
 
+    /** Returns true if this exact handle is currently muted. */
+    isMuted(handle: string): boolean {
+        return this.muted.has(handle);
+    }
+
     /** Human-readable summary of current filter state, used by /filters command. */
     describe(): string {
         const focus = `Focus mode: ${this.focusMode ? 'ON' : 'OFF'}`;

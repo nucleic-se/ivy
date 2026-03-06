@@ -227,20 +227,6 @@ describe('LLMAgent', () => {
         await expect(agent.think(baseContext())).rejects.toThrow('calls[1].tool must be a non-empty string');
     });
 
-    it('returns coordinate action when LLM provides coordinate field', async () => {
-        const llm = mockLLM({ coordinate: { to: '@nova', text: 'handoff: please continue' } });
-        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
-
-        const result = await agent.think(baseContext());
-        expect(result).toEqual([{ type: 'coordinate', to: '@nova', text: 'handoff: please continue' }]);
-    });
-
-    it('validates coordinate requires non-empty to and text', async () => {
-        const llm = mockLLM({ coordinate: { to: '', text: 'hi' } });
-        const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
-        await expect(agent.think(baseContext())).rejects.toThrow('coordinate.to must be a non-empty string');
-    });
-
     it('returns configure with context window fields', async () => {
         const llm = mockLLM({ configure: { publicContextWindow: 10, privateContextWindow: 5, internalContextWindow: 8 } });
         const agent = new LLMAgent({ handle: '@ivy', displayName: 'Ivy', systemPrompt: 'test' }, llm);
@@ -601,11 +587,11 @@ describe('AgentParticipant', () => {
         expect(seen.some(m => m.text.includes('Unknown handle mention(s): @ghost'))).toBe(true);
     });
 
-    it('routes coordinate action as a DM to the target', async () => {
+    it('routes dm action to the target', async () => {
         const agent: Agent = {
             handle: '@ivy',
             displayName: 'Ivy',
-            think: vi.fn().mockResolvedValue([{ type: 'coordinate', to: '@nova', text: 'take it from here' }] satisfies AgentAction[]),
+            think: vi.fn().mockResolvedValue([{ type: 'dm', to: '@nova', text: 'take it from here' }] satisfies AgentAction[]),
         };
 
         const participant = new AgentParticipant(agent, room);

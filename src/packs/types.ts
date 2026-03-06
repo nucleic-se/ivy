@@ -1,5 +1,5 @@
 import type { IPromptContributorRegistry } from '@nucleic-se/gears/agentic';
-import type { AgentContext, SpeakAction, DmAction, CoordinateAction } from '../types.js';
+import type { AgentContext, SpeakAction, DmAction } from '../types.js';
 import type { Room } from '../Room.js';
 
 export interface IvyPromptContext {
@@ -19,7 +19,7 @@ export interface IvyAgentPack {
 }
 
 /** The subset of actions that routing guards can inspect and modify. */
-export type RoutableAction = SpeakAction | DmAction | CoordinateAction;
+export type RoutableAction = SpeakAction | DmAction;
 
 export interface IvyRoutingGuardContext {
     senderHandle: string;

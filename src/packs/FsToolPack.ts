@@ -1,9 +1,10 @@
 /**
- * FsToolPack — file-system comparison tools for sandbox agents.
+ * FsToolPack — file-system tools for sandbox agents.
  *
- * Mounts a virtual tool group at /tools/fs/ with one tool:
+ * Mounts a virtual tool group at /tools/fs/ with:
  *
  *   fs/diff  — compare two sandbox files; returns a unified diff string
+ *   fs/rm    — delete a file or directory (recursive opt-in)
  *
  * All paths are agent-visible absolute paths (e.g. "/home/notes.md").
  * Security enforcement is delegated to the Sandbox instance.
@@ -16,10 +17,11 @@ import type { Sandbox } from '../sandbox/Sandbox.js';
 import { ToolGroupPack, type Tool } from '../sandbox/ToolGroupPack.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
 import { requireString, normAgentPath } from './pack-helpers.js';
+import { MAX_SANDBOX_FILE_BYTES } from '../constants.js';
 
 // ─── Constants ───────────────────────────────────────────────────
 
-const MAX_FILE_BYTES = 512 * 1024; // 512 KB per file
+const MAX_FILE_BYTES = MAX_SANDBOX_FILE_BYTES;
 
 // ─── FsToolPack ──────────────────────────────────────────────────
 
@@ -29,6 +31,7 @@ export class FsToolPack {
     createLayer(): SandboxLayer {
         return new ToolGroupPack('fs', [
             this.diffTool(),
+            this.rmTool(),
         ]).createLayer();
     }
 
@@ -69,6 +72,31 @@ export class FsToolPack {
                 const diff = createTwoFilesPatch(fromPath, toPath, fromContent, toContent);
 
                 return { diff, from: fromPath, to: toPath };
+            },
+        };
+    }
+
+    // ── fs/rm ────────────────────────────────────────────────────
+
+    private rmTool(): Tool {
+        const { sandbox } = this;
+        return {
+            name: 'rm',
+            description: [
+                'Delete a file or directory from the sandbox.',
+                'By default only removes files and empty directories.',
+                'Set recursive: true to remove a directory and all its contents.',
+                'Protected paths (/, /home, /tools, /data, /tmp) and cross-agent home paths cannot be deleted.',
+            ].join(' '),
+            parameters: {
+                path:      { type: 'string',  description: 'Absolute sandbox path to delete', required: true },
+                recursive: { type: 'boolean', description: 'If true, recursively delete directory contents (default false)', required: false },
+            },
+            returns: 'string — confirmation message',
+            handler: async (args, callerHandle) => {
+                const agentPath = normAgentPath(requireString(args, 'path'));
+                const recursive = args['recursive'] === true;
+                return sandbox.execFs({ type: 'fs', op: 'rm', path: agentPath, recursive }, callerHandle);
             },
         };
     }

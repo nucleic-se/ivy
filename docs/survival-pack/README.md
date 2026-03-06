@@ -35,16 +35,27 @@ After copying, boot the app. On first tick @sentinel will run an integrity gate 
 │   ├── protocols/
 │   │   ├── index.md
 │   │   ├── AGENT_MANUAL.md           ← how to think and behave (cognitive guide)
-│   │   ├── WORKFLOW.md               ← how work is planned, executed, reviewed, closed; includes recovery rules, validation rule IDs, heartbeat, and communication discipline
+│   │   ├── WORKFLOW.md               ← task lifecycle, recovery, validation, communication
 │   │   └── PROPOSALS.md              ← change proposal lifecycle
 │   ├── sops/
 │   │   ├── index.md
 │   │   ├── ivy.md                    ← @ivy operational playbook
 │   │   ├── nova.md                   ← @nova operational playbook
 │   │   ├── sentinel.md               ← @sentinel operational playbook
-│   │   └── template.md               ← blank SOP for new agents
+│   │   ├── template.md               ← blank SOP for new agents
+│   │   ├── diary-daily.md            ← @ivy daily diary living script
+│   │   ├── archive-migration.md      ← @nova weekly archive migration
+│   │   ├── ledger-reconciliation.md  ← @nova daily ledger reconciliation
+│   │   ├── research/                 ← research bundle (web-brief, monitoring, synthesis)
+│   │   └── self/                     ← self-improvement (retrospective, protocol-review, knowledge-migration, free-time)
 │   ├── library/
-│   │   └── index.md                  ← permanent knowledge base (empty, grows with use)
+│   │   ├── index.md
+│   │   └── technical/                ← technical references (living-script-syntax, tool patterns)
+│   ├── skills/
+│   │   └── index.md                  ← shared pattern library (grows with use)
+│   ├── archive/
+│   │   ├── index.md
+│   │   └── projects/                 ← completed project workspaces
 │   └── templates/
 │       ├── index.md
 │       ├── task.md                   ← living script task file template
@@ -60,26 +71,50 @@ After copying, boot the app. On first tick @sentinel will run an integrity gate 
     ├── ivy/
     │   ├── index.md
     │   ├── CONTEXT.md
-    │   ├── AGENTS.md                 ← @ivy identity and responsibilities
-    │   └── tasks/
-    │       └── index.md
+    │   ├── AGENTS.md                 ← @ivy identity and responsibilities (read-only)
+    │   ├── CORRECTIONS.md            ← @ivy self-authored corrections (auto-loaded every tick)
+    │   ├── tasks/
+    │   │   └── index.md
+    │   └── lab/                      ← autonomous R&D workspace
+    │       ├── index.md
+    │       └── ideas.md
     ├── nova/
     │   ├── index.md
     │   ├── CONTEXT.md
-    │   ├── AGENTS.md                 ← @nova identity and responsibilities
-    │   └── tasks/
-    │       └── index.md
+    │   ├── AGENTS.md                 ← @nova identity and responsibilities (read-only)
+    │   ├── CORRECTIONS.md            ← @nova self-authored corrections (auto-loaded every tick)
+    │   ├── tasks/
+    │   │   └── index.md
+    │   └── lab/                      ← autonomous R&D workspace
+    │       ├── index.md
+    │       └── ideas.md
     ├── sentinel/
     │   ├── index.md
     │   ├── CONTEXT.md
-    │   └── AGENTS.md                 ← @sentinel identity and responsibilities
+    │   └── AGENTS.md                 ← @sentinel identity and responsibilities (read-only)
     └── _agent/                       ← template for adding new agents (not deployed)
         ├── index.md
         ├── CONTEXT.md
         ├── AGENTS.md
+        ├── CORRECTIONS.md
         └── tasks/
             └── index.md
 ```
+
+---
+
+## Human Documentation
+
+These docs live in `ivy/docs/` (the bundle source, not the sandbox). Read them before operating the sandbox:
+
+| Document | Audience | Purpose |
+|---|---|---|
+| `docs/OPERATING_GUIDE.md` | Operator | How to train agents, read logs, fix issues, manage approvals — the full operating loop |
+| `docs/BOOTSTRAP_GUIDE.md` | Agent / Operator | How to bring a blank sandbox to a working state from first boot |
+| `docs/SANDBOX_DESIGN.md` | Architect | Design insights, best practices, and anti-patterns from operating a live multi-agent sandbox |
+| `docs/TRIGGERS.md` | Operator | Runtime trigger reference — Telegram commands, schedule IDs, lab mode phrases |
+
+Start with `OPERATING_GUIDE.md` if you are new to operating this stack.
 
 ---
 

@@ -41,15 +41,16 @@ Respond directly for that thread. After the thread ends, return to the normal ro
 ## Completing a Task
 
 1. Run `validate/run` on the affected path. Fix all violations.
-2. DM @ivy:
+2. If closing a project: migrate findings with long-term value to `/data/library/` before archiving.
+3. DM @ivy:
    - What was done
    - Path to the deliverable
    - `validate/run` result (must be pass)
    - Any open questions
-3. Update task file: mark complete. Archive or delete it.
-4. Update CONTEXT.md: clear checklist, set `Current Task: awaiting-direction`.
-5. Return heartbeat to `null`.
-6. **Stop.** Wait for @ivy.
+4. Update task file: mark complete. Archive or delete it.
+5. Update CONTEXT.md: clear checklist, set `Current Task: awaiting-direction`.
+6. Return heartbeat to `null`.
+7. **Stop.** Wait for @ivy.
 
 ---
 
@@ -60,6 +61,19 @@ Respond directly for that thread. After the thread ends, return to the normal ro
 - Room posts are only for: completed deliverables when @architect needs to see them directly, critical escalations, and direct responses when @architect has addressed you.
 - If @architect posts to the room without mentioning @nova: stay silent. @ivy handles it.
 - No acknowledgment-only DMs ("copy that", "understood", "on it").
+
+---
+
+## Research Tasks
+
+When @ivy routes a research or synthesis task, use the appropriate SOP:
+
+- External sources needed → [research/web-brief.md](./research/web-brief.md)
+- Consolidate internal docs → [research/synthesis.md](./research/synthesis.md)
+- Recurring source watch → [research/monitoring.md](./research/monitoring.md)
+
+After closing a project → [self/retrospective.md](./self/retrospective.md)
+Quarterly archive cleanup → [self/knowledge-migration.md](./self/knowledge-migration.md)
 
 ---
 
@@ -83,14 +97,3 @@ Two-strike rule (see Recovery section in `WORKFLOW.md`). On strike two:
 4. Set heartbeat to `300000` ms (standby).
 5. Wait.
 
----
-
-## Heartbeat
-
-Default on startup: `null` (idle — off), since wakeMode is `mentions`.
-
-| State | heartbeatMs |
-|---|---|
-| Active multi-tick task | 60,000 |
-| Awaiting @ivy direction | null (off) |
-| Locked by @architect | Do not self-adjust; record in CONTEXT.md |

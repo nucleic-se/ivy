@@ -9,7 +9,7 @@
  * Files that didn't exist before a failed run are deleted on rollback.
  * Side effects outside these paths (e.g. network calls) are not rolled back.
  *
- * Max ops per batch: 20. Snapshot size limit: 512 KB per file.
+ * Max ops per batch: 20. Snapshot size limit: MAX_SANDBOX_FILE_BYTES per file.
  */
 
 import * as fs from 'node:fs';
@@ -18,11 +18,12 @@ import type { Sandbox } from '../sandbox/Sandbox.js';
 import { ToolGroupPack, type Tool } from '../sandbox/ToolGroupPack.js';
 import type { SandboxLayer } from '../sandbox/layer.js';
 import { requireString, normAgentPath } from './pack-helpers.js';
+import { MAX_SANDBOX_FILE_BYTES } from '../constants.js';
 
 // ─── Constants ───────────────────────────────────────────────────
 
 const MAX_OPS = 20;
-const MAX_SNAPSHOT_BYTES = 512 * 1024;
+const MAX_SNAPSHOT_BYTES = MAX_SANDBOX_FILE_BYTES;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -50,6 +51,11 @@ function collectAgentPaths(ops: BatchOp[], sandbox: Sandbox): string[] {
     const seen = new Set<string>();
     function addPath(agentPath: string): void {
         seen.add(agentPath);
+        // Also snapshot the parent index.md — tools like index/write perform an
+        // implicit secondary write to the parent directory's index.md that would
+        // otherwise be missed by the args-based path collection.
+        const parentIndex = path.posix.join(path.posix.dirname(agentPath), 'index.md');
+        if (parentIndex !== agentPath) seen.add(parentIndex);
         // Expand directories: snapshot immediate children so file mutations
         // inside a directory arg are captured and can be rolled back.
         try {

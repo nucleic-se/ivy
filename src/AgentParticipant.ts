@@ -16,7 +16,7 @@
  */
 
 import type { ILogger, IStore } from '@nucleic-se/gears';
-import type { Agent, AgentAction, AgentContext, CallAction, CoordinateAction, Message, Participant, WakeMode } from './types.js';
+import type { Agent, AgentAction, AgentContext, CallAction, Message, Participant, WakeMode } from './types.js';
 import type { Room } from './Room.js';
 import type { IvyActionHandler, IvyParticipantPackContext, IvyRoutingGuard, RoutableAction } from './packs/types.js';
 import type { Sandbox } from './sandbox/Sandbox.js';
@@ -30,6 +30,9 @@ import {
     DEFAULT_MAX_CONTINUATIONS,
     DEFAULT_PARTICIPANT_PACKS,
     DEFAULT_WAKE_MODE,
+    CONSECUTIVE_ERROR_THRESHOLD,
+    MAX_QUEUE_SIZE,
+    MAX_ERROR_BACKOFF_MS,
 } from './constants.js';
 
 interface PersistedAgentConfig {
@@ -68,6 +71,13 @@ export interface AgentParticipantConfig {
      * Explicit constructor config always overrides any persisted value.
      */
     store?: IStore;
+    /**
+     * Called when the agent hits CONSECUTIVE_ERROR_THRESHOLD consecutive LLM failures.
+     * The pending stimulus queue is cleared before this fires (stale after repeated failures).
+     * Use to emit an alert (e.g. Slack notification). The agent continues running and will
+     * recover automatically once the LLM provider starts responding again.
+     */
+    onDegraded?: (handle: string) => void;
 }
 
 export class AgentParticipant implements Participant {
@@ -97,6 +107,11 @@ export class AgentParticipant implements Participant {
     >;
     private configLoaded = false;
 
+    // Degradation tracking
+    private consecutiveErrors = 0;
+    private degraded = false;
+    private readonly onDegraded: ((handle: string) => void) | null;
+
     // Stimulus queue + wake signal
     private queue: Message[] = [];
     private wakeRequested = false;
@@ -118,6 +133,7 @@ export class AgentParticipant implements Participant {
         this.heartbeatMs = config?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
         this.maxContinuations = config?.maxContinuations ?? DEFAULT_MAX_CONTINUATIONS;
         this.store = config?.store ?? null;
+        this.onDegraded = config?.onDegraded ?? null;
         this.storeKey = `ivy:agent:${this.handle}:config`;
         this.explicitConfig = {
             wakeMode: config?.wakeMode,
@@ -213,19 +229,42 @@ export class AgentParticipant implements Participant {
             });
             try {
                 await this.process(stimuli);
+                this.consecutiveErrors = 0;
+                this.degraded = false;
             } catch (err) {
                 const msg = (err as Error).message;
                 this.logger?.error(`${this.displayName} think error`, {
                     error: msg,
                     stack: (err as Error).stack?.split('\n').slice(0, 4).join(' | '),
                 });
-                // Re-queue stimuli so they are not silently dropped on LLM errors.
+
+                // Re-queue stimuli so they are not lost on LLM errors.
                 if (stimuli.length > 0) {
                     this.queue.unshift(...stimuli);
-                    this.logger?.warn(`${this.displayName} re-queued ${stimuli.length} stimulus/stimuli after think error`);
                 }
-                // Backoff: prevent tight retry loop on persistent provider errors.
-                await new Promise<void>(r => setTimeout(r, 10_000));
+
+                // Cap the queue to prevent unbounded growth during sustained outages.
+                // Drop oldest entries — recent stimuli are more relevant on recovery.
+                if (this.queue.length > MAX_QUEUE_SIZE) {
+                    const dropped = this.queue.length - MAX_QUEUE_SIZE;
+                    this.queue = this.queue.slice(dropped);
+                    this.logger?.warn(`${this.displayName} queue capped — dropped ${dropped} oldest stimulus/stimuli`);
+                }
+
+                this.consecutiveErrors++;
+                this.logger?.warn(`${this.displayName} re-queued stimuli after think error (${this.consecutiveErrors}/${CONSECUTIVE_ERROR_THRESHOLD})`, { queued: this.queue.length });
+
+                // On reaching the threshold: notify once, then use exponential backoff.
+                if (this.consecutiveErrors === CONSECUTIVE_ERROR_THRESHOLD) {
+                    this.degraded = true;
+                    this.onDegraded?.(this.handle);
+                }
+
+                // Backoff: flat 10s for transient errors; exponential (capped) when degraded.
+                const backoffMs = this.degraded
+                    ? Math.min(10_000 * Math.pow(2, this.consecutiveErrors - CONSECUTIVE_ERROR_THRESHOLD), MAX_ERROR_BACKOFF_MS)
+                    : 10_000;
+                await new Promise<void>(r => setTimeout(r, backoffMs));
                 if (!this.running) break;
             }
         }
@@ -435,9 +474,9 @@ export class AgentParticipant implements Participant {
                 this.room.note(this.handle, lines.join('\n'));
             }
 
-            // Speak / DM / Coordinate: pass through routing guards before dispatch.
+            // Speak / DM: pass through routing guards before dispatch.
             const routableActions = actions.filter(
-                (a): a is RoutableAction => a.type === 'speak' || a.type === 'dm' || a.type === 'coordinate',
+                (a): a is RoutableAction => a.type === 'speak' || a.type === 'dm',
             );
             if (routableActions.length > 0) {
                 const approved = await this.applyRoutingGuards(routableActions);
@@ -494,8 +533,8 @@ export class AgentParticipant implements Participant {
     }
 
     private dispatchAction(action: RoutableAction): void {
-        if (action.type === 'dm' || action.type === 'coordinate') {
-            this.room.dm(this.handle, (action as CoordinateAction).to, action.text);
+        if (action.type === 'dm') {
+            this.room.dm(this.handle, action.to, action.text);
         } else {
             this.room.post(this.handle, action.text);
         }

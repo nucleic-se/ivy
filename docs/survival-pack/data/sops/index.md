@@ -11,3 +11,5 @@ Per-agent operational playbooks. Read your SOP on every heartbeat wake with no s
 - [diary-daily.md](./diary-daily.md): @ivy — daily diary living script (synthesis → logic review → sealing).
 - [archive-migration.md](./archive-migration.md): @nova — weekly archive migration living script.
 - [ledger-reconciliation.md](./ledger-reconciliation.md): @nova — daily ledger reconciliation living script.
+- [research/](./research/index.md): Research bundle — web-brief, monitoring, synthesis.
+- [self/](./self/index.md): Self-improvement bundle — retrospective, protocol-review, knowledge-migration.

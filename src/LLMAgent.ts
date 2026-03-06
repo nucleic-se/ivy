@@ -12,12 +12,12 @@
 
 import type { ILLMProvider } from '@nucleic-se/gears';
 import { AIPromptService, PromptContributorRegistry, PromptEngine } from '@nucleic-se/gears/agentic';
-import type { Agent, AgentAction, AgentContext, CoordinateAction, WakeMode } from './types.js';
+import type { Agent, AgentAction, AgentContext, WakeMode } from './types.js';
 import type { IvyPromptContext } from './packs/types.js';
 import type { Sandbox } from './sandbox/Sandbox.js';
 import { bootInternalPacks } from './packs/index.js';
 import { SandboxAgentPack } from './packs/sandbox-prompt.js';
-import { DEFAULT_AGENT_PACKS, DEFAULT_PROMPT_TOKEN_BUDGET } from './constants.js';
+import { DEFAULT_AGENT_PACKS, DEFAULT_PROMPT_TOKEN_BUDGET, MAX_CALLS_PER_TICK } from './constants.js';
 
 export interface LLMAgentConfig {
     handle: string;
@@ -33,7 +33,6 @@ export interface LLMAgentConfig {
 interface ThinkResult {
     speak?: string;
     dm?: { to: string; text: string };
-    coordinate?: { to: string; text: string };
     note?: string;
     configure?: {
         wakeOn?: WakeMode;
@@ -60,15 +59,6 @@ const RESPONSE_SCHEMA = {
             },
             required: ['to', 'text'],
             description: 'Send a private message to a specific participant.',
-        },
-        coordinate: {
-            type: 'object',
-            properties: {
-                to: { type: 'string', description: 'Receiving agent handle, e.g. "@nova".' },
-                text: { type: 'string', description: 'Handoff message content.' },
-            },
-            required: ['to', 'text'],
-            description: 'Semantic alias for dm: signal an inter-agent work handoff. Routed identically to dm.',
         },
         note: {
             type: 'string',
@@ -114,8 +104,8 @@ const RESPONSE_SCHEMA = {
                 },
                 required: ['tool'],
             },
-            maxItems: 8,
-            description: 'Sandbox tool calls ONLY (e.g. text/read, json/set, schedule/list). NEVER use this for dm, speak, note, fs, or configure — those are top-level fields. Use multiple entries for atomic multi-step operations. Maximum 8.',
+            maxItems: MAX_CALLS_PER_TICK,
+            description: `Sandbox tool calls ONLY (e.g. text/read, json/set, schedule/list). NEVER use this for dm, speak, note, fs, or configure — those are top-level fields. Use multiple entries for atomic multi-step operations. Maximum ${MAX_CALLS_PER_TICK}.`,
         },
     },
     required: [],
@@ -169,9 +159,6 @@ export class LLMAgent implements Agent {
         if (result.dm) {
             actions.push({ type: 'dm', to: result.dm.to, text: result.dm.text });
         }
-        if (result.coordinate) {
-            actions.push({ type: 'coordinate', to: result.coordinate.to, text: result.coordinate.text } satisfies CoordinateAction);
-        }
         if (result.note?.trim()) {
             actions.push({ type: 'note', text: result.note.trim() });
         }
@@ -189,7 +176,7 @@ export class LLMAgent implements Agent {
     /**
      * Rescue common Haiku/small-model mistakes before validation:
      * - `calls` as a non-array single object → wrap in array
-     * - Top-level action names (speak, dm, note, coordinate, configure) in calls[] → promote to top-level fields
+     * - Top-level action names (speak, dm, note, configure) in calls[] → promote to top-level fields
      */
     private coerceThinkResult(raw: ThinkResult): ThinkResult {
         if (typeof raw !== 'object' || raw === null) return raw;
@@ -223,10 +210,6 @@ export class LLMAgent implements Agent {
                     if (result.dm === undefined && typeof args['to'] === 'string' && typeof args['text'] === 'string')
                         result.dm = { to: args['to'], text: args['text'] };
                     break;
-                case 'coordinate':
-                    if (result.coordinate === undefined && typeof args['to'] === 'string' && typeof args['text'] === 'string')
-                        result.coordinate = { to: args['to'], text: args['text'] };
-                    break;
                 case 'configure':
                     if (result.configure === undefined && typeof args === 'object')
                         result.configure = args as ThinkResult['configure'];
@@ -251,11 +234,6 @@ export class LLMAgent implements Agent {
             if (typeof raw.dm !== 'object' || raw.dm === null) throw new Error('LLM output dm must be an object');
             if (typeof raw.dm.to !== 'string' || !raw.dm.to.trim()) throw new Error('LLM output dm.to must be a non-empty string');
             if (typeof raw.dm.text !== 'string' || !raw.dm.text.trim()) throw new Error('LLM output dm.text must be a non-empty string');
-        }
-        if (raw.coordinate !== undefined) {
-            if (typeof raw.coordinate !== 'object' || raw.coordinate === null) throw new Error('LLM output coordinate must be an object');
-            if (typeof raw.coordinate.to !== 'string' || !raw.coordinate.to.trim()) throw new Error('LLM output coordinate.to must be a non-empty string');
-            if (typeof raw.coordinate.text !== 'string' || !raw.coordinate.text.trim()) throw new Error('LLM output coordinate.text must be a non-empty string');
         }
         if (raw.note !== undefined) {
             if (typeof raw.note !== 'string') throw new Error('LLM output note must be a string');
@@ -287,8 +265,8 @@ export class LLMAgent implements Agent {
         if (raw.calls !== undefined) {
             if (!Array.isArray(raw.calls))
                 throw new Error('LLM output calls must be an array');
-            if (raw.calls.length > 8)
-                throw new Error('LLM output calls must not exceed 8 entries per tick');
+            if (raw.calls.length > MAX_CALLS_PER_TICK)
+                throw new Error(`LLM output calls must not exceed ${MAX_CALLS_PER_TICK} entries per tick`);
             for (const [i, c] of (raw.calls as unknown[]).entries()) {
                 if (typeof c !== 'object' || c === null)
                     throw new Error(`LLM output calls[${i}] must be an object`);

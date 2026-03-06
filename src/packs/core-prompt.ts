@@ -24,10 +24,17 @@ const WakeContextContributor: IPromptContributor<IvyPromptContext> = {
         const { wakeMode, heartbeatMs } = ctx.context;
         const heartbeatDesc = heartbeatMs != null ? `every ${heartbeatMs}ms` : 'off';
         const now = new Date().toISOString().replace('T', ' ').replace('Z', ' UTC');
+        const pub = ctx.context.publicMessages.length;
+        const pubMax = ctx.context.publicContextWindow;
+        const prv = ctx.context.privateMessages.length;
+        const prvMax = ctx.context.privateContextWindow;
+        const int = ctx.context.internalMessages.length;
+        const intMax = ctx.context.internalContextWindow;
+        const ctxFill = `pub ${pub}/${pubMax} · prv ${prv}/${prvMax} · notes ${int}/${intMax}`;
         const text = [
             '## Attention settings',
-            `Date: ${now} | Wake on: ${wakeMode} | Heartbeat: ${heartbeatDesc}`,
-            'Use the "configure" field to adjust these at any time.',
+            `Date: ${now} | Wake: ${wakeMode} | Heartbeat: ${heartbeatDesc} | Context: ${ctxFill}`,
+            'Use the "configure" field to adjust these. Run context/compact if notes window is near full.',
         ].join('\n');
         return [section('core.wake-context', text, 85, false, 'constraint')];
     },
